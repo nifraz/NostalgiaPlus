@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build and publish, e.g. v1.0.0'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          $tag = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME }
+                 else { '${{ github.event.inputs.tag }}' }
+          if ($tag -notmatch '^v?(\d+)\.(\d+)(?:\.(\d+))?$') {
+            throw "Tag '$tag' is not a version like v1.0.0"
+          }
+          $major = $Matches[1]; $minor = $Matches[2]
+          $rev = if ($Matches[3]) { $Matches[3] } else { '0' }
+          "tag=$tag"       | Out-File $env:GITHUB_OUTPUT -Append
+          "major=$major"   | Out-File $env:GITHUB_OUTPUT -Append
+          "minor=$minor"   | Out-File $env:GITHUB_OUTPUT -Append
+          "revision=$rev"  | Out-File $env:GITHUB_OUTPUT -Append
+          Write-Host "Building $tag  ->  $major.$minor.$rev"
+
+      # The version MusicBee shows in its plugin list is compiled in, so stamp it
+      # from the tag rather than letting the two drift apart.
+      - name: Stamp version into the plugin
+        shell: pwsh
+        run: |
+          $path = 'src/Plugin.cs'
+          $src = Get-Content $path -Raw
+          $src = $src -replace '_about\.VersionMajor = \d+;', '_about.VersionMajor = ${{ steps.version.outputs.major }};'
+          $src = $src -replace '_about\.VersionMinor = \d+;', '_about.VersionMinor = ${{ steps.version.outputs.minor }};'
+          $src = $src -replace '_about\.Revision = \d+;',     '_about.Revision = ${{ steps.version.outputs.revision }};'
+          Set-Content $path $src -NoNewline
+          Select-String -Path $path -Pattern 'VersionMajor|VersionMinor|Revision ='
+
+      - name: Build
+        shell: cmd
+        run: build\build.cmd
+
+      - name: DSP verification
+        shell: cmd
+        run: build\test.cmd
+
+      - name: Package
+        id: package
+        shell: pwsh
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          $stage = "dist/NostalgiaPlus-$tag"
+          New-Item -ItemType Directory -Force $stage | Out-Null
+          Copy-Item bin/mb_NostalgiaPlus.dll $stage
+          Copy-Item README.md $stage
+          if (Test-Path LICENSE) { Copy-Item LICENSE $stage }
+          $zip = "dist/NostalgiaPlus-$tag.zip"
+          Compress-Archive -Path "$stage/*" -DestinationPath $zip -Force
+          "zip=$zip" | Out-File $env:GITHUB_OUTPUT -Append
+          Get-Item $zip | Select-Object Name, Length
+
+      - name: Publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          # Literal here-string: a double-quoted one would treat every backtick as
+          # an escape character and mangle the markdown code spans.
+          $notes = @'
+          ### Install
+
+          1. Close MusicBee.
+          2. Copy `mb_NostalgiaPlus.dll` into the MusicBee plugins folder.
+             - Microsoft Store build: `%LOCALAPPDATA%\Packages\<MusicBee package>\LocalCache\Roaming\MusicBee\Plugins`
+             - Installer build: `%APPDATA%\MusicBee\Plugins`
+          3. Start MusicBee and add the panel via **View -> Arrange Panels**.
+          4. Press **F11** for the fullscreen stereo view, **I** for immersive mode.
+
+          Requires .NET Framework 4.x. No other dependencies.
+          '@
+          $notes | Out-File -Encoding utf8 notes.md
+          # No --verify-tag: a manual dispatch may name a tag that does not exist
+          # yet, and gh will create it at the checked-out commit.
+          gh release create $tag '${{ steps.package.outputs.zip }}' --title "Nostalgia+ $tag" --notes-file notes.md

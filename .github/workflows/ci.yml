@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      # No SDK setup step: this targets .NET Framework 4.x and builds with the
+      # csc.exe that ships with Windows, which is present on the runner image.
+      - name: Build
+        shell: cmd
+        run: build\build.cmd
+
+      - name: DSP verification
+        shell: cmd
+        run: build\test.cmd
+
+      # Creates WinForms windows offscreen, so it depends on the runner having a
+      # usable desktop session. Informative rather than blocking.
+      - name: Host load simulation
+        shell: cmd
+        continue-on-error: true
+        run: build\verify.cmd
+
+      - name: Upload plugin
+        uses: actions/upload-artifact@v4
+        with:
+          name: mb_NostalgiaPlus
+          path: bin/mb_NostalgiaPlus.dll
+          if-no-files-found: error

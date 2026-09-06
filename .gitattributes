@@ -1,0 +1,7 @@
+# Binaries must never be line-ending normalised
+*.png binary
+*.dll binary
+
+# Batch files need CRLF; workflow files are consumed on Linux tooling paths
+*.cmd text eol=crlf
+*.yml text eol=lf
