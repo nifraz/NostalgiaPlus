@@ -25,6 +25,7 @@ class TestHarness
         TestLayoutBudgets();
         TestMusicFeatures();
         TestThemes();
+        TestMenuActions();
         Console.WriteLine(_fail == 0 ? "\nALL CHECKS PASSED" : "\n" + _fail + " CHECK(S) FAILED");
         Environment.Exit(_fail == 0 ? 0 : 1);
     }
@@ -520,6 +521,89 @@ class TestHarness
         finally
         {
             try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Every menu action now runs through a wrapper that posts it back to the control
+    /// the menu belongs to, so the menu can finish closing before a dialog or a new
+    /// window appears. With no such control - which is this harness, and any detached
+    /// menu - the wrapper has to fall through and run the action directly rather than
+    /// silently dropping it.
+    /// </summary>
+    static void TestMenuActions()
+    {
+        Console.WriteLine("[menu actions]");
+        var s = new Settings();
+        var menu = new System.Windows.Forms.ContextMenuStrip();
+        MenuFactory.Populate(menu, s, new MenuFactory.Options
+        {
+            IsFullscreen = false,
+            ScrollPixels = 800,
+            IsFrozen = delegate { return false; },
+            ToggleFreeze = delegate { },
+            Changed = delegate(bool rebuild) { },
+        });
+
+        Check("the menu builds", menu.Items.Count > 0, menu.Items.Count + " top-level items");
+
+        var grid = FindItem(menu.Items, "Gridlines");
+        Check("a known toggle is present", grid != null, "");
+        if (grid == null) return;
+
+        bool before = s.ShowGrid;
+        grid.PerformClick();
+        Check("clicking it still acts with no host to post to", s.ShowGrid != before,
+              before + " -> " + s.ShowGrid);
+
+        // Tooltips are what the deferral exists to let go: they have to be on when the
+        // menu is built, or none of the explanations ever appear.
+        Check("tooltips are enabled on the menu", menu.ShowItemToolTips, "");
+        Check("and carry text", !string.IsNullOrEmpty(grid.ToolTipText),
+              FirstLine(grid.ToolTipText));
+
+        int described = 0, total = 0;
+        CountTips(menu.Items, ref described, ref total);
+        Check("nearly every item explains itself", described >= total * 9 / 10,
+              described + " of " + total);
+        menu.Dispose();
+    }
+
+    static string FirstLine(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        // Tooltip text is written with bare newlines, not the platform's pair.
+        int n = text.IndexOf((char)10);
+        return n < 0 ? text : text.Substring(0, n);
+    }
+
+    static System.Windows.Forms.ToolStripMenuItem FindItem(
+        System.Windows.Forms.ToolStripItemCollection items, string startsWith)
+    {
+        foreach (System.Windows.Forms.ToolStripItem it in items)
+        {
+            var mi = it as System.Windows.Forms.ToolStripMenuItem;
+            if (mi == null) continue;
+            if (mi.Text != null && mi.Text.StartsWith(startsWith)) return mi;
+            if (mi.HasDropDownItems)
+            {
+                var found = FindItem(mi.DropDownItems, startsWith);
+                if (found != null) return found;
+            }
+        }
+        return null;
+    }
+
+    static void CountTips(System.Windows.Forms.ToolStripItemCollection items,
+                          ref int described, ref int total)
+    {
+        foreach (System.Windows.Forms.ToolStripItem it in items)
+        {
+            var mi = it as System.Windows.Forms.ToolStripMenuItem;
+            if (mi == null) continue;
+            total++;
+            if (!string.IsNullOrEmpty(mi.ToolTipText)) described++;
+            if (mi.HasDropDownItems) CountTips(mi.DropDownItems, ref described, ref total);
         }
     }
 

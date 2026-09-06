@@ -77,7 +77,7 @@ namespace NostalgiaPlus.Ui
             freeze.ToolTipText = "Stop the spectrograms scrolling so a moment can be read at leisure.\n"
                                  + "Analysis keeps running; only the picture is held.";
             freeze.Checked = o.IsFrozen != null && o.IsFrozen();
-            freeze.Click += delegate { o.ToggleFreeze(); };
+            OnClick(freeze, delegate { o.ToggleFreeze(); });
             menu.Items.Add(freeze);
 
             if (o.ToggleFullscreen != null)
@@ -87,7 +87,7 @@ namespace NostalgiaPlus.Ui
                 fs.ToolTipText = o.IsFullscreen
                     ? "Return to the docked panel."
                     : "Open the same view full screen, with meters, waveform lanes and track info.";
-                fs.Click += delegate { o.ToggleFullscreen(); };
+                OnClick(fs, delegate { o.ToggleFullscreen(); });
                 menu.Items.Add(fs);
             }
 
@@ -118,9 +118,32 @@ namespace NostalgiaPlus.Ui
             {
                 var strip = sender as ToolStrip;
                 if (strip == null) return;
+                HideLiveTooltip(strip);
                 strip.ShowItemToolTips = false;
                 DisableTips(strip.Items);
             };
+
+        /// <summary>
+        /// Takes down a tooltip that is on screen right now.
+        ///
+        /// Setting ShowItemToolTips to false is not enough on its own: the framework
+        /// guards its own hide on that same flag, so by the time the setter would act
+        /// the flag already says tooltips are off and nothing happens. The internal
+        /// method that does the hiding has to be called while the flag is still true.
+        /// Best effort - if the member is not there, the deferred click ordering has
+        /// already prevented the case this was written for.
+        /// </summary>
+        private static void HideLiveTooltip(ToolStrip strip)
+        {
+            try
+            {
+                var m = typeof(ToolStrip).GetMethod("UpdateToolTip",
+                            System.Reflection.BindingFlags.Instance |
+                            System.Reflection.BindingFlags.NonPublic);
+                if (m != null) m.Invoke(strip, new object[] { null });
+            }
+            catch { }
+        }
 
         private static void DisableTips(ToolStripItemCollection items)
         {
@@ -131,6 +154,52 @@ namespace NostalgiaPlus.Ui
                 mi.DropDown.ShowItemToolTips = false;
                 DisableTips(mi.DropDownItems);
             }
+        }
+
+        /// <summary>
+        /// Attaches a click handler that runs after the menu has finished closing.
+        ///
+        /// Menu actions here open windows: the fullscreen view, the colour picker, the
+        /// name prompt, a confirmation box. Doing that from inside the Click handler
+        /// means the new window takes activation while the menu is still up, and the
+        /// menu's tooltip - a window of its own, dismissed by the ToolStrip when the
+        /// menu closes - never gets its dismissal. It was left floating over the new
+        /// view until something repainted that part of the screen.
+        ///
+        /// Posting the action back to the control the menu belongs to lets the close
+        /// complete first, so the tooltip goes the ordinary way and the new window
+        /// opens onto a clean screen.
+        /// </summary>
+        private static void OnClick(ToolStripItem item, EventHandler action)
+        {
+            item.Click += delegate(object sender, EventArgs e)
+            {
+                Control host = HostOf(sender as ToolStripItem);
+                if (host != null && host.IsHandleCreated)
+                {
+                    try
+                    {
+                        host.BeginInvoke((MethodInvoker)delegate { action(sender, e); });
+                        return;
+                    }
+                    catch { /* fall through and run it directly */ }
+                }
+                action(sender, e);
+            };
+        }
+
+        /// <summary>The control a menu item ultimately belongs to, through any nesting.</summary>
+        private static Control HostOf(ToolStripItem item)
+        {
+            for (int guard = 0; item != null && guard < 8; guard++)
+            {
+                var ctx = item.Owner as ContextMenuStrip;
+                if (ctx != null) return ctx.SourceControl;
+                var drop = item.Owner as ToolStripDropDown;
+                if (drop == null) return null;
+                item = drop.OwnerItem;
+            }
+            return null;
         }
 
         private static void EnableTips(ToolStripItemCollection items)
@@ -159,7 +228,7 @@ namespace NostalgiaPlus.Ui
             var mi = new ToolStripMenuItem(text);
             mi.ToolTipText = tip;
             mi.Checked = ticked;
-            mi.Click += onClick;
+            OnClick(mi, onClick);
             parent.DropDownItems.Add(mi);
         }
 
@@ -169,7 +238,7 @@ namespace NostalgiaPlus.Ui
             var mi = new ToolStripMenuItem(text);
             mi.ToolTipText = tip;
             mi.Checked = state;
-            mi.Click += onClick;
+            OnClick(mi, onClick);
             items.Add(mi);
         }
 
@@ -232,13 +301,13 @@ namespace NostalgiaPlus.Ui
             var save = new ToolStripMenuItem("Save current as...");
             save.ToolTipText = "Store every current setting under a name of your own, so an\n"
                                + "arrangement you like can be returned to.";
-            save.Click += delegate
+            OnClick(save, delegate
             {
                 string name = NameDialog.Ask(o.Owner, "Save preset",
                                              "Name for these settings:", "My preset");
                 if (name == null) return;
                 if (s.SaveUserPreset(o.StorageDir, name)) o.Changed(false);
-            };
+            });
             m.DropDownItems.Add(save);
 
             if (saved.Length > 0)
@@ -944,7 +1013,7 @@ namespace NostalgiaPlus.Ui
                                  + (c.IsEmpty ? "Following the palette."
                                               : "Set to #" + ((uint)c.ToArgb()).ToString("X8")
                                                 + ". Right-hand entry below clears it.");
-                mi.Click += delegate
+                OnClick(mi, delegate
                 {
                     using (var dlg = new ColorDialog())
                     {
@@ -956,7 +1025,7 @@ namespace NostalgiaPlus.Ui
                         s.SetSlot(captured, dlg.Color);
                         o.Changed(false);
                     }
-                };
+                });
                 m.DropDownItems.Add(mi);
             }
 
@@ -964,7 +1033,7 @@ namespace NostalgiaPlus.Ui
 
             var reset = new ToolStripMenuItem("Back to the palette");
             reset.ToolTipText = "Clear every override, so all of it follows the palette again.";
-            reset.Click += delegate { s.ClearAllSlots(); o.Changed(false); };
+            OnClick(reset, delegate { s.ClearAllSlots(); o.Changed(false); });
             m.DropDownItems.Add(reset);
 
             if (o.SkinColour != null)
@@ -974,7 +1043,7 @@ namespace NostalgiaPlus.Ui
                                    + "MusicBee is using, so the panel sits in the window rather\n"
                                    + "than on it. The spectrogram palette is left alone - it is a\n"
                                    + "measurement scale, not decoration.";
-                skin.Click += delegate { s.ThemeFromSkin(o.SkinColour); o.Changed(false); };
+                OnClick(skin, delegate { s.ThemeFromSkin(o.SkinColour); o.Changed(false); });
                 m.DropDownItems.Add(skin);
             }
 
@@ -999,12 +1068,12 @@ namespace NostalgiaPlus.Ui
             save.ToolTipText = "Store the twelve colours under a name. Themes carry colours only,\n"
                                + "so one can be applied over any preset without dragging that\n"
                                + "preset's analysis settings along.";
-            save.Click += delegate
+            OnClick(save, delegate
             {
                 string name = NameDialog.Ask(o.Owner, "Save theme", "Name for these colours:", "My theme");
                 if (name == null) return;
                 if (s.SaveTheme(o.StorageDir, name)) o.Changed(false);
-            };
+            });
             m.DropDownItems.Add(save);
 
             if (themes.Length > 0)
@@ -1047,7 +1116,7 @@ namespace NostalgiaPlus.Ui
                                   + "the bar costs. For short docked panels.";
             compact.Checked = s.QuickBarCompact;
             compact.Enabled = s.ShowQuickButtons;
-            compact.Click += delegate { s.QuickBarCompact = !s.QuickBarCompact; o.Changed(true); };
+            OnClick(compact, delegate { s.QuickBarCompact = !s.QuickBarCompact; o.Changed(true); });
             m.DropDownItems.Add(compact);
 
             var split = new ToolStripMenuItem("Split around the centre");
@@ -1056,7 +1125,7 @@ namespace NostalgiaPlus.Ui
                                 + "of being crossed by the row.";
             split.Checked = s.QuickBarSplit;
             split.Enabled = s.ShowQuickButtons;
-            split.Click += delegate { s.QuickBarSplit = !s.QuickBarSplit; o.Changed(true); };
+            OnClick(split, delegate { s.QuickBarSplit = !s.QuickBarSplit; o.Changed(true); });
             m.DropDownItems.Add(split);
 
             m.DropDownItems.Add(new ToolStripSeparator());
@@ -1076,7 +1145,7 @@ namespace NostalgiaPlus.Ui
                                       + "a musical axis, slower scroll, and every label fading away\n"
                                       + "while you are not touching anything.";
                     imm.Checked = s.FsImmersive;
-                    imm.Click += delegate { o.ToggleImmersive(); };
+                    OnClick(imm, delegate { o.ToggleImmersive(); });
                     m.DropDownItems.Add(imm);
                 }
                 var imm2 = Sub("Immersion", "How the picture responds to the music itself, rather than\n"
