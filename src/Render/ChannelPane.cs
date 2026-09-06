@@ -26,6 +26,7 @@ namespace NostalgiaPlus.Render
         public double Alpha = 1.0;
         /// <summary>Pixels to drop scales by so they clear a status line or overlay bar.</summary>
         public int TopInset;
+
     }
 
     /// <summary>
@@ -62,6 +63,18 @@ namespace NostalgiaPlus.Render
         // today's spectrum.
         private float[] _hist = new float[0];
         private int _histHead, _histCols, _histBins;
+
+        // Per-element overrides. Empty means the drawing code keeps its own colour,
+        // which is derived from the palette - so a theme is opt-in per element rather
+        // than a scheme that replaces everything at once.
+        public Color Panel = Color.Empty;
+        public Color GridMajor = Color.Empty;
+        public Color AxisText = Color.Empty;
+        public Color Units = Color.Empty;
+        public Color Curve = Color.Empty;
+        public Color PeakTrace = Color.Empty;
+        public Color AverageTrace = Color.Empty;
+        public Color MinimumTrace = Color.Empty;
 
         public Rectangle Bounds { get; private set; }
         public Rectangle CurveRect { get; private set; }
@@ -338,8 +351,9 @@ namespace NostalgiaPlus.Render
             int dir = CurveOnLeft ? 1 : -1;
             float amp = CurveRect.Width;
 
-            Color hi = Palette.ColorAt(lut, 0.85);
-            Color lo = Palette.ColorAt(lut, 0.35);
+            Color hi = Settings.Pick(Curve, Palette.ColorAt(lut, 0.85));
+            Color lo = Curve.IsEmpty ? Palette.ColorAt(lut, 0.35)
+                                     : Color.FromArgb(Curve.R / 2, Curve.G / 2, Curve.B / 2);
 
             DrawBackground(g, floorDb, ceilDb, span, baseX, dir, amp, o);
 
@@ -357,11 +371,11 @@ namespace NostalgiaPlus.Render
             {
                 g.SmoothingMode = SmoothingMode.None;
                 if (o.ShowMax) DrawTrace(g, _ext.Max, baseX, dir, amp, floorDb, span,
-                                         Color.FromArgb(180, 255, 255, 255));
+                                         Settings.PickKeepAlpha(PeakTrace, Color.FromArgb(180, 255, 255, 255)));
                 if (o.ShowAvg) DrawTrace(g, _ext.Average, baseX, dir, amp, floorDb, span,
-                                         Color.FromArgb(170, 130, 200, 255));
+                                         Settings.PickKeepAlpha(AverageTrace, Color.FromArgb(170, 130, 200, 255)));
                 if (o.ShowMin) DrawTrace(g, _ext.Min, baseX, dir, amp, floorDb, span,
-                                         Color.FromArgb(140, 120, 120, 140));
+                                         Settings.PickKeepAlpha(MinimumTrace, Color.FromArgb(140, 120, 120, 140)));
             }
 
             g.SmoothingMode = old;
@@ -388,10 +402,18 @@ namespace NostalgiaPlus.Render
         public void DrawScaleLane(Graphics g, double alpha, Font font,
                                   string levelUnit, string timeUnit)
         {
+            DrawScaleLane(g, alpha, font, levelUnit, timeUnit, Color.Empty, Color.Empty);
+        }
+
+        public void DrawScaleLane(Graphics g, double alpha, Font font,
+                                  string levelUnit, string timeUnit,
+                                  Color panel, Color units)
+        {
             _dbUnit = RectangleF.Empty;
             _timeUnit = RectangleF.Empty;
             if (LaneRect.Height <= 0 || alpha <= 0.004) return;
-            using (var bg = new SolidBrush(Color.FromArgb((int)(255 * alpha), 13, 13, 16)))
+            Color ground = Settings.PickKeepAlpha(panel, Color.FromArgb(255, 13, 13, 16));
+            using (var bg = new SolidBrush(Color.FromArgb((int)(255 * alpha), ground)))
                 g.FillRectangle(bg, LaneRect);
             // Hairline on the edge facing the image, so the strip reads as a ruler
             // against the picture rather than as a gap in it.
@@ -400,7 +422,8 @@ namespace NostalgiaPlus.Render
                 g.DrawLine(line, LaneRect.Left, edge, LaneRect.Right - 1, edge);
 
             if (font == null) return;
-            using (var unit = new SolidBrush(Color.FromArgb((int)(190 * alpha), 150, 200, 245)))
+            Color unitInk = Settings.PickKeepAlpha(units, Color.FromArgb(190, 150, 200, 245));
+            using (var unit = new SolidBrush(Color.FromArgb((int)(unitInk.A * alpha), unitInk)))
             {
                 // Level is measured from the baseline the bars grow out of, so its name
                 // goes there; time is counted back from the live edge, so its name goes
@@ -480,8 +503,10 @@ namespace NostalgiaPlus.Render
             bool labels = o.ShowDbScale && o.LabelFont != null &&
                           CurveRect.Width >= (LaneRect.Height > 0 ? 34 : 58);
 
-            using (var pen = new Pen(Color.FromArgb((int)(34 * o.Alpha), 255, 255, 255)))
-            using (var brush = new SolidBrush(Color.FromArgb((int)(215 * o.Alpha), 235, 235, 242)))
+            Color lineC = Settings.PickKeepAlpha(GridMajor, Color.FromArgb(34, 255, 255, 255));
+            Color textC = Settings.PickKeepAlpha(AxisText, Color.FromArgb(215, 235, 235, 242));
+            using (var pen = new Pen(Color.FromArgb((int)(lineC.A * o.Alpha), lineC)))
+            using (var brush = new SolidBrush(Color.FromArgb((int)(textC.A * o.Alpha), textC)))
             {
                 for (double d = Math.Ceiling(floorDb / step) * step; d <= ceilDb; d += step)
                 {
@@ -502,7 +527,7 @@ namespace NostalgiaPlus.Render
                             // text, and nothing of the graph hidden by it.
                             int t0, t1;
                             LaneTick(out t0, out t1);
-                            using (var tick = new Pen(Color.FromArgb((int)(110 * o.Alpha), 255, 255, 255)))
+                            using (var tick = new Pen(Color.FromArgb((int)(110 * o.Alpha), lineC)))
                                 g.DrawLine(tick, x, t0, x, t1);
                             // The unit caption owns its corner; a number printed over it
                             // would read as neither.
@@ -550,10 +575,12 @@ namespace NostalgiaPlus.Render
             for (int i = 0; i < choices.Length; i++)
                 if (choices[i] * rowsPerSecond >= 85.0) { step = choices[i]; break; }
 
-            using (var pen = new Pen(Color.FromArgb((int)(30 * alpha), 255, 255, 255)))
-            using (var brush = new SolidBrush(Color.FromArgb((int)(215 * alpha), 235, 235, 242)))
+            Color tLine = Settings.PickKeepAlpha(GridMajor, Color.FromArgb(30, 255, 255, 255));
+            Color tText = Settings.PickKeepAlpha(AxisText, Color.FromArgb(215, 235, 235, 242));
+            using (var pen = new Pen(Color.FromArgb((int)(tLine.A * alpha), tLine)))
+            using (var brush = new SolidBrush(Color.FromArgb((int)(tText.A * alpha), tText)))
             using (var chip = new SolidBrush(Color.FromArgb((int)(170 * alpha), 8, 8, 11)))
-            using (var tickPen = new Pen(Color.FromArgb((int)(110 * alpha), 255, 255, 255)))
+            using (var tickPen = new Pen(Color.FromArgb((int)(110 * alpha), tLine)))
                 for (double t = step; t < visible; t += step)
                 {
                     int off = (int)(t * rowsPerSecond);

@@ -24,6 +24,7 @@ class TestHarness
         TestSettingsPersistence();
         TestLayoutBudgets();
         TestMusicFeatures();
+        TestThemes();
         Console.WriteLine(_fail == 0 ? "\nALL CHECKS PASSED" : "\n" + _fail + " CHECK(S) FAILED");
         Environment.Exit(_fail == 0 ? 0 : 1);
     }
@@ -314,6 +315,14 @@ class TestHarness
         if (t == typeof(int)) return (int)current + 7;
         if (t == typeof(float)) return (float)current + 1.5f;
         if (t == typeof(double)) return (double)current + 1.5;
+        if (t == typeof(Color))
+        {
+            // Must differ from Color.Empty in a way that survives #AARRGGBB, which
+            // means opaque and non-zero: an empty colour is written as "auto".
+            var c = (Color)current;
+            return c.IsEmpty ? Color.FromArgb(255, 17, 34, 51)
+                             : Color.FromArgb(255, c.B, c.R, c.G);
+        }
         if (t.IsEnum)
         {
             Array vals = Enum.GetValues(t);
@@ -467,6 +476,51 @@ class TestHarness
               highF.Centroid.ToString("0.00"));
         Check("the two are far apart", highF.Centroid - lowF.Centroid > 0.6,
               (highF.Centroid - lowF.Centroid).ToString("0.00"));
+    }
+
+    /// <summary>
+    /// Themes carry colours and nothing else, so one can be applied over any preset.
+    /// The point of the test is that second half: loading a theme must not disturb the
+    /// analysis settings around it.
+    /// </summary>
+    static void TestThemes()
+    {
+        Console.WriteLine("[themes]");
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                            "NostalgiaPlusTest_" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            var a = new Settings();
+            a.SetSlot(ThemeSlot.Background, Color.FromArgb(255, 12, 24, 36));
+            a.SetSlot(ThemeSlot.PeakTrace, Color.FromArgb(255, 250, 200, 40));
+            Check("saves", a.SaveTheme(dir, "Midnight"), "");
+            Check("appears in the listing", Settings.ListThemes(dir).Length == 1, "");
+
+            var b = new Settings();
+            b.ApplyPreset(Preset.Bass);
+            double fmax = b.FMax;
+            var quality = b.Quality;
+            b.SetSlot(ThemeSlot.Background, Color.FromArgb(255, 90, 0, 0));
+
+            Check("loads", b.LoadTheme(dir, "Midnight"), "");
+            Check("colours arrive",
+                  b.GetSlot(ThemeSlot.Background).ToArgb() == Color.FromArgb(255, 12, 24, 36).ToArgb()
+                  && b.GetSlot(ThemeSlot.PeakTrace).ToArgb() == Color.FromArgb(255, 250, 200, 40).ToArgb(),
+                  "#" + ((uint)b.GetSlot(ThemeSlot.Background).ToArgb()).ToString("X8"));
+            Check("unset slots come back unset", b.GetSlot(ThemeSlot.Curve).IsEmpty, "");
+            Check("the preset is left alone", b.FMax == fmax && b.Quality == quality,
+                  b.Quality + " to " + b.FMax.ToString("0") + " Hz");
+
+            b.ClearAllSlots();
+            Check("clearing returns everything to the palette",
+                  b.GetSlot(ThemeSlot.Background).IsEmpty && b.GetSlot(ThemeSlot.PeakTrace).IsEmpty, "");
+            Check("deletes", b.DeleteTheme(dir, "Midnight") && Settings.ListThemes(dir).Length == 0, "");
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
     }
 
     static void TestUserPresets()

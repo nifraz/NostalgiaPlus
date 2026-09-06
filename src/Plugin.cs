@@ -291,6 +291,12 @@ namespace MusicBeePlugin
                 b.IsPlaying = delegate { return _mb.Player_GetPlayState() == PlayState.Playing; };
             if (_mb.NowPlaying_GetArtwork != null)
                 b.Artwork = delegate { return _mb.NowPlaying_GetArtwork(); };
+            if (_mb.Setting_GetSkinElementColour != null)
+                b.SkinColour = delegate(int element, int state, int component)
+                {
+                    return _mb.Setting_GetSkinElementColour(
+                        (SkinElement)element, (ElementState)state, (ElementComponent)component);
+                };
             if (_mb.Player_PlayPause != null)
                 b.PlayPause = delegate { _mb.Player_PlayPause(); };
             if (_mb.Player_PlayNextTrack != null)

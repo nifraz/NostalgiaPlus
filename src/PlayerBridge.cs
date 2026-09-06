@@ -26,6 +26,13 @@ namespace NostalgiaPlus
         /// <summary>Base64 image data for the current track's artwork, or null.</summary>
         public Func<string> Artwork;
 
+        /// <summary>
+        /// A colour from the host's current skin: element, state, component. Not player
+        /// state, but it comes from the same place and through the same door - the views
+        /// stay free of MusicBee's own types either way.
+        /// </summary>
+        public Func<int, int, int, int> SkinColour;
+
         public Action PlayPause;
         public Action Next;
         public Action Previous;

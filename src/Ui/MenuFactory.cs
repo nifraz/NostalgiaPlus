@@ -1,4 +1,5 @@
 using System;
+using System.Drawing;
 using System.Windows.Forms;
 using NostalgiaPlus.Dsp;
 using NostalgiaPlus.Render;
@@ -37,6 +38,8 @@ namespace NostalgiaPlus.Ui
             public string StorageDir;
             /// <summary>Owner for the name prompt.</summary>
             public IWin32Window Owner;
+            /// <summary>Host skin colours, for building a theme that matches MusicBee.</summary>
+            public Func<int, int, int, int> SkinColour;
             /// <summary>Called after any change; the flag asks for a geometry rebuild.</summary>
             public Action<bool> Changed;
         }
@@ -850,6 +853,140 @@ namespace NostalgiaPlus.Ui
                        s.Palette == captured,
                        delegate { s.Palette = captured; s.Preset = Preset.Custom; o.Changed(false); });
             }
+            m.DropDownItems.Add(new ToolStripSeparator());
+            m.DropDownItems.Add(Elements(s, o));
+            return m;
+        }
+
+        private static readonly string[] SlotNames = {
+            "Background", "Panels and strips", "Gridlines", "Fine gridlines",
+            "Axis text", "Unit captions", "Spectrum curve", "Peak trace",
+            "Average trace", "Minimum trace", "Hover", "Waveform"
+        };
+
+        private static readonly string[] SlotTips = {
+            "Behind everything. Normally the darkest entry of the palette.",
+            "The scale strip, the centre gutter, the colour bar and the waveform\nlane grounds.",
+            "The lines at labelled frequencies, and the level lines on the graph.",
+            "The semitone lines and the subdivisions between labelled rows.",
+            "Frequency, time and level numbers.",
+            "The Hz, dBFS and \"now\" captions.",
+            "The instantaneous spectrum. Set this and the graph stops following\nthe palette.",
+            "The held maximum, normally white.",
+            "The running average, normally blue.",
+            "The quietest level seen, normally grey.",
+            "The crosshair, the readout and the note pin.",
+            "The waveform lanes under each pane."
+        };
+
+        /// <summary>
+        /// Per-element colours.
+        ///
+        /// Every slot starts unset, meaning it follows the palette - which is what keeps
+        /// the display coherent when the palette changes, and what lets colour keep
+        /// following the music in immersive mode. Setting one opts that element out;
+        /// it does not freeze the rest.
+        ///
+        /// Overrides supply hue only: the element keeps the transparency it was drawn
+        /// with, because most of this display is deliberately translucent and a picker
+        /// only offers opaque colours.
+        /// </summary>
+        private static ToolStripMenuItem Elements(Settings s, Options o)
+        {
+            var m = Sub("Elements", "Set the colour of individual parts. Anything left unset follows\n"
+                                    + "the palette, including while it is tracking the music.");
+
+            var vals = (ThemeSlot[])Enum.GetValues(typeof(ThemeSlot));
+            for (int i = 0; i < vals.Length; i++)
+            {
+                ThemeSlot captured = vals[i];
+                Color c = s.GetSlot(captured);
+                var mi = new ToolStripMenuItem(
+                    SlotNames[i] + (c.IsEmpty ? "" : "   \u25A0"));
+                mi.ToolTipText = (i < SlotTips.Length ? SlotTips[i] + "\n\n" : "")
+                                 + (c.IsEmpty ? "Following the palette."
+                                              : "Set to #" + ((uint)c.ToArgb()).ToString("X8")
+                                                + ". Right-hand entry below clears it.");
+                mi.Click += delegate
+                {
+                    using (var dlg = new ColorDialog())
+                    {
+                        dlg.FullOpen = true;
+                        dlg.AnyColor = true;
+                        Color cur = s.GetSlot(captured);
+                        if (!cur.IsEmpty) dlg.Color = cur;
+                        if (dlg.ShowDialog(o.Owner) != DialogResult.OK) return;
+                        s.SetSlot(captured, dlg.Color);
+                        o.Changed(false);
+                    }
+                };
+                m.DropDownItems.Add(mi);
+            }
+
+            m.DropDownItems.Add(new ToolStripSeparator());
+
+            var reset = new ToolStripMenuItem("Back to the palette");
+            reset.ToolTipText = "Clear every override, so all of it follows the palette again.";
+            reset.Click += delegate { s.ClearAllSlots(); o.Changed(false); };
+            m.DropDownItems.Add(reset);
+
+            if (o.SkinColour != null)
+            {
+                var skin = new ToolStripMenuItem("Match the MusicBee skin");
+                skin.ToolTipText = "Take the background, panel and text colours from the skin\n"
+                                   + "MusicBee is using, so the panel sits in the window rather\n"
+                                   + "than on it. The spectrogram palette is left alone - it is a\n"
+                                   + "measurement scale, not decoration.";
+                skin.Click += delegate { s.ThemeFromSkin(o.SkinColour); o.Changed(false); };
+                m.DropDownItems.Add(skin);
+            }
+
+            if (o.StorageDir == null) return m;
+
+            string[] themes = Settings.ListThemes(o.StorageDir);
+            if (themes.Length > 0)
+            {
+                m.DropDownItems.Add(new ToolStripSeparator());
+                foreach (string name in themes)
+                {
+                    string captured = name;
+                    Choice(m, name, "Load this theme. Colours only - nothing else changes.",
+                           false, delegate
+                           {
+                               if (s.LoadTheme(o.StorageDir, captured)) o.Changed(false);
+                           });
+                }
+            }
+
+            var save = new ToolStripMenuItem("Save these colours as...");
+            save.ToolTipText = "Store the twelve colours under a name. Themes carry colours only,\n"
+                               + "so one can be applied over any preset without dragging that\n"
+                               + "preset's analysis settings along.";
+            save.Click += delegate
+            {
+                string name = NameDialog.Ask(o.Owner, "Save theme", "Name for these colours:", "My theme");
+                if (name == null) return;
+                if (s.SaveTheme(o.StorageDir, name)) o.Changed(false);
+            };
+            m.DropDownItems.Add(save);
+
+            if (themes.Length > 0)
+            {
+                var del = Sub("Delete theme", "Remove a saved theme. Asks first.");
+                foreach (string name in themes)
+                {
+                    string captured = name;
+                    Choice(del, name, "Delete this theme permanently.", false, delegate
+                    {
+                        if (MessageBox.Show("Delete theme \"" + captured + "\"?", "Nostalgia+",
+                                            MessageBoxButtons.YesNo, MessageBoxIcon.Question)
+                            == DialogResult.Yes && s.DeleteTheme(o.StorageDir, captured))
+                            o.Changed(false);
+                    });
+                }
+                m.DropDownItems.Add(del);
+            }
+
             return m;
         }
 

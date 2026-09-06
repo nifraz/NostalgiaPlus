@@ -219,7 +219,19 @@ namespace NostalgiaPlus.Render
 
             for (int i = 0; i < _panes.Length; i++)
             {
-                _panes[i].DrawScaleLane(g, alpha, labelFont, levelUnit, timeUnit);
+                // Pushed in rather than passed as arguments: the pane draws a dozen
+                // things and threading a colour through each call would be worse than
+                // setting them once a frame.
+                _panes[i].Panel = s.ColPanel;
+                _panes[i].GridMajor = s.ColGridMajor;
+                _panes[i].AxisText = s.ColAxisText;
+                _panes[i].Units = s.ColUnits;
+                _panes[i].Curve = s.ColCurve;
+                _panes[i].PeakTrace = s.ColPeakTrace;
+                _panes[i].AverageTrace = s.ColAverageTrace;
+                _panes[i].MinimumTrace = s.ColMinimumTrace;
+                _panes[i].DrawScaleLane(g, alpha, labelFont, levelUnit, timeUnit,
+                                        s.ColPanel, s.ColUnits);
                 _panes[i].DrawSpectrogram(g, _lut, glow);
                 if (s.ShowTimeMarks && alpha > 0.004)
                     _panes[i].DrawTimeMarks(g, labelFont, rowsPerSecond, alpha, topInset);
@@ -242,7 +254,8 @@ namespace NostalgiaPlus.Render
             int h = _panes[0].SpectroRect.Height;
             int top = _panes[0].SpectroRect.Top;
             if (GutterRect.Width > 0)
-                using (var bg = new SolidBrush(FadeColor(Color.FromArgb(255, 12, 12, 15), alpha)))
+                using (var bg = new SolidBrush(FadeColor(
+                           Settings.PickKeepAlpha(s.ColPanel, Color.FromArgb(255, 12, 12, 15)), alpha)))
                     g.FillRectangle(bg, GutterRect);
 
             // After the gutter is filled, not before: the fill covers the whole column
@@ -262,7 +275,8 @@ namespace NostalgiaPlus.Render
             {
                 double pxPerOctave = h / Math.Log(_map.FMax / _map.FMin, 2.0);
                 if (pxPerOctave > 96 && freqs.Count < 40)
-                    using (var fine = new Pen(FadeColor(Color.FromArgb(16, 255, 255, 255), alpha)))
+                    using (var fine = new Pen(FadeColor(
+                               Settings.PickKeepAlpha(s.ColGridMinor, Color.FromArgb(16, 255, 255, 255)), alpha)))
                         for (int midi = 12; midi <= 132; midi++)
                         {
                             if (midi % 12 == 0) continue;
@@ -274,10 +288,14 @@ namespace NostalgiaPlus.Render
                         }
             }
 
-            using (var pen = new Pen(FadeColor(Color.FromArgb(38, 255, 255, 255), alpha)))
-            using (var minorPen = new Pen(FadeColor(Color.FromArgb(20, 255, 255, 255), alpha)))
-            using (var brush = new SolidBrush(FadeColor(Color.FromArgb(185, 232, 232, 238), alpha)))
-            using (var minorBrush = new SolidBrush(FadeColor(Color.FromArgb(120, 210, 210, 220), alpha)))
+            Color majorC = Settings.PickKeepAlpha(s.ColGridMajor, Color.FromArgb(38, 255, 255, 255));
+            Color minorC = Settings.PickKeepAlpha(s.ColGridMinor, Color.FromArgb(20, 255, 255, 255));
+            Color textC = Settings.PickKeepAlpha(s.ColAxisText, Color.FromArgb(185, 232, 232, 238));
+            Color textMinorC = Settings.PickKeepAlpha(s.ColAxisText, Color.FromArgb(120, 210, 210, 220));
+            using (var pen = new Pen(FadeColor(majorC, alpha)))
+            using (var minorPen = new Pen(FadeColor(minorC, alpha)))
+            using (var brush = new SolidBrush(FadeColor(textC, alpha)))
+            using (var minorBrush = new SolidBrush(FadeColor(textMinorC, alpha)))
             {
                 for (int i = 0; i < freqs.Count; i++)
                 {
@@ -382,7 +400,8 @@ namespace NostalgiaPlus.Render
             float y = inLane ? lane.Top + (lane.Height - sz.Height) / 2f : axisTop + 1;
 
             using (var chip = new SolidBrush(FadeColor(Color.FromArgb(190, 8, 8, 11), alpha)))
-            using (var ink = new SolidBrush(FadeColor(Color.FromArgb(190, 150, 200, 245), alpha)))
+            using (var ink = new SolidBrush(FadeColor(
+                       Settings.PickKeepAlpha(s.ColUnits, Color.FromArgb(190, 150, 200, 245)), alpha)))
             {
                 DrawUnitIn(g, GutterRect, unit, font, sz, y, inLane, chip, ink);
                 DrawUnitIn(g, OuterLeftRect, unit, font, sz, y, inLane, chip, ink);
@@ -568,7 +587,8 @@ namespace NostalgiaPlus.Render
 
             int lineFrom = s.SyncHover ? Bounds.Left : hit.Bounds.Left;
             int lineTo = s.SyncHover ? Bounds.Right : hit.Bounds.Right;
-            using (var pen = new Pen(FadeColor(Color.FromArgb(120, 255, 255, 255), alpha)))
+            Color hoverC = Settings.PickKeepAlpha(s.ColHover, Color.FromArgb(120, 255, 255, 255));
+            using (var pen = new Pen(FadeColor(hoverC, alpha)))
             {
                 g.DrawLine(pen, lineFrom, mouse.Y, lineTo, mouse.Y);
                 // Mark the sampled instant, and mirror it into the other pane, which
@@ -586,7 +606,8 @@ namespace NostalgiaPlus.Render
             }
 
             // Mark where the line crosses each pane's curve, so the level is locatable.
-            using (var dot = new SolidBrush(FadeColor(Color.FromArgb(220, 255, 255, 255), alpha)))
+            using (var dot = new SolidBrush(FadeColor(
+                       Settings.PickKeepAlpha(s.ColHover, Color.FromArgb(220, 255, 255, 255)), alpha)))
                 for (int i = 0; i < _panes.Length; i++)
                 {
                     if (!s.SyncHover && !ReferenceEquals(_panes[i], hit)) continue;

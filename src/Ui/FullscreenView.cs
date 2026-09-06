@@ -113,6 +113,7 @@ namespace NostalgiaPlus.Ui
                     ToggleImmersive = ToggleImmersive,
                     StorageDir = _storageDir,
                     Owner = this,
+                    SkinColour = _player == null ? null : _player.SkinColour,
                     Changed = OnSettingsChanged
                 });
             };
@@ -571,7 +572,7 @@ namespace NostalgiaPlus.Ui
             // and, at these sizes on a dark ground, indistinguishable.
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
             UpdateHue();
-            g.Clear(Palette.Background(_lut));
+            g.Clear(Settings.Pick(_settings.ColBackground, Palette.Background(_lut)));
             if (_settings.ImmBackdrop && _settings.FsImmersive) DrawBackdrop(g);
             // The OSD switch gates every drawn annotation; gridlines stay because they
             // are part of reading the image rather than chrome on top of it.
@@ -626,10 +627,11 @@ namespace NostalgiaPlus.Ui
 
         private void DrawWaveforms(Graphics g)
         {
-            using (var bg = new SolidBrush(Color.FromArgb(255, 10, 10, 12)))
+            using (var bg = new SolidBrush(Settings.PickKeepAlpha(
+                       _settings.ColPanel, Color.FromArgb(255, 10, 10, 12))))
                 g.FillRectangle(bg, 0, _waveARect.Y, ClientSize.Width, _waveARect.Height);
 
-            Color c = Palette.ColorAt(_lut, 0.86);
+            Color c = Settings.Pick(_settings.ColWaveform, Palette.ColorAt(_lut, 0.86));
             using (var pen = new Pen(Color.FromArgb(215, c)))
             using (var mid = new Pen(Color.FromArgb(45, 255, 255, 255)))
             {

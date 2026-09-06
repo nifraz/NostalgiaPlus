@@ -85,6 +85,7 @@ namespace NostalgiaPlus.Ui
                     },
                     StorageDir = _storageDir,
                     Owner = this,
+                    SkinColour = Player == null ? null : Player.SkinColour,
                     Changed = OnSettingsChanged
                 });
             };
@@ -272,7 +273,7 @@ namespace NostalgiaPlus.Ui
         {
             Graphics g = e.Graphics;
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
-            g.Clear(Palette.Background(_lut));
+            g.Clear(Settings.Pick(_settings.ColBackground, Palette.Background(_lut)));
 
             // The status line is chrome over the image, so it starts below the scale
             // strip; the pane insets stay relative to the image, which already does.
@@ -299,7 +300,8 @@ namespace NostalgiaPlus.Ui
         private void DrawColorBar(Graphics g)
         {
             Rectangle r = _barRect;
-            using (var bg = new SolidBrush(Color.FromArgb(255, 14, 14, 16)))
+            using (var bg = new SolidBrush(Settings.PickKeepAlpha(
+                       _settings.ColPanel, Color.FromArgb(255, 14, 14, 16))))
                 g.FillRectangle(bg, r);
 
             int barX = r.Left + 5, barW = 11, top = r.Top + 12, bot = r.Bottom - 12;
@@ -336,7 +338,8 @@ namespace NostalgiaPlus.Ui
             string text = string.Format("{0}  |  {1}  |  {2}  |  {3:0} fps  |  {4:0.0} ms  |  {5}{6}",
                 src, _scope.Analyzer.DescribeResolution(), _settings.PairMode, _fps,
                 _lastAnalysisMs, _settings.Preset, _frozen ? "  |  FROZEN" : "");
-            using (var brush = new SolidBrush(Color.FromArgb(140, 210, 210, 215)))
+            using (var brush = new SolidBrush(Settings.PickKeepAlpha(
+                       _settings.ColAxisText, Color.FromArgb(140, 210, 210, 215))))
                 g.DrawString(text, _fontSmall, brush, 4, top + 2);
         }
 

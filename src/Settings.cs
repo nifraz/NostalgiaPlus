@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Globalization;
+using System.Drawing;
 using System.IO;
 using NostalgiaPlus.Dsp;
 using NostalgiaPlus.Render;
@@ -17,6 +18,20 @@ namespace NostalgiaPlus
 
     /// <summary>What the frequency axis prints at each gridline.</summary>
     public enum AxisLabelMode { Notes, Frequency, Both }
+
+    /// <summary>
+    /// The parts of the display whose colour can be set by hand.
+    ///
+    /// Every one defaults to empty, meaning "follow the palette" - so the colours stay
+    /// coherent when the palette changes, and keep following the music when the hue is
+    /// tracking the centroid. Overriding a slot opts that one element out of all of
+    /// that; it does not turn the rest into a fixed scheme.
+    /// </summary>
+    public enum ThemeSlot
+    {
+        Background, Panel, GridMajor, GridMinor, AxisText, Units,
+        Curve, PeakTrace, AverageTrace, MinimumTrace, Hover, Waveform
+    }
 
     /// <summary>Which end of the panes the reserved scale strip sits at.</summary>
     public enum ScaleLanePosition { Top, Bottom }
@@ -168,6 +183,80 @@ namespace NostalgiaPlus
         public int ColourFollowDegrees = 40;
         /// <summary>Much slower scroll and longer trails, for watching rather than reading.</summary>
         public bool ImmCinematic = false;
+
+        // --- per-element colours. Empty means "derive it from the palette". ---
+        public Color ColBackground = Color.Empty;
+        public Color ColPanel = Color.Empty;
+        public Color ColGridMajor = Color.Empty;
+        public Color ColGridMinor = Color.Empty;
+        public Color ColAxisText = Color.Empty;
+        public Color ColUnits = Color.Empty;
+        public Color ColCurve = Color.Empty;
+        public Color ColPeakTrace = Color.Empty;
+        public Color ColAverageTrace = Color.Empty;
+        public Color ColMinimumTrace = Color.Empty;
+        public Color ColHover = Color.Empty;
+        public Color ColWaveform = Color.Empty;
+
+        /// <summary>The slot's colour, or <paramref name="fallback"/> when it is unset.</summary>
+        public static Color Pick(Color slot, Color fallback)
+        {
+            return slot.IsEmpty ? fallback : slot;
+        }
+
+        /// <summary>
+        /// The same, keeping the fallback's alpha. Most of the display's colours are
+        /// translucent by design - gridlines, chips, traces - and a picker only offers
+        /// opaque colours, so an override supplies the hue and the element keeps the
+        /// transparency it was drawn with.
+        /// </summary>
+        public static Color PickKeepAlpha(Color slot, Color fallback)
+        {
+            return slot.IsEmpty ? fallback : Color.FromArgb(fallback.A, slot.R, slot.G, slot.B);
+        }
+
+        public Color GetSlot(ThemeSlot slot)
+        {
+            switch (slot)
+            {
+                case ThemeSlot.Background: return ColBackground;
+                case ThemeSlot.Panel: return ColPanel;
+                case ThemeSlot.GridMajor: return ColGridMajor;
+                case ThemeSlot.GridMinor: return ColGridMinor;
+                case ThemeSlot.AxisText: return ColAxisText;
+                case ThemeSlot.Units: return ColUnits;
+                case ThemeSlot.Curve: return ColCurve;
+                case ThemeSlot.PeakTrace: return ColPeakTrace;
+                case ThemeSlot.AverageTrace: return ColAverageTrace;
+                case ThemeSlot.MinimumTrace: return ColMinimumTrace;
+                case ThemeSlot.Hover: return ColHover;
+                default: return ColWaveform;
+            }
+        }
+
+        public void SetSlot(ThemeSlot slot, Color c)
+        {
+            switch (slot)
+            {
+                case ThemeSlot.Background: ColBackground = c; break;
+                case ThemeSlot.Panel: ColPanel = c; break;
+                case ThemeSlot.GridMajor: ColGridMajor = c; break;
+                case ThemeSlot.GridMinor: ColGridMinor = c; break;
+                case ThemeSlot.AxisText: ColAxisText = c; break;
+                case ThemeSlot.Units: ColUnits = c; break;
+                case ThemeSlot.Curve: ColCurve = c; break;
+                case ThemeSlot.PeakTrace: ColPeakTrace = c; break;
+                case ThemeSlot.AverageTrace: ColAverageTrace = c; break;
+                case ThemeSlot.MinimumTrace: ColMinimumTrace = c; break;
+                case ThemeSlot.Hover: ColHover = c; break;
+                default: ColWaveform = c; break;
+            }
+        }
+
+        public void ClearAllSlots()
+        {
+            foreach (ThemeSlot t in Enum.GetValues(typeof(ThemeSlot))) SetSlot(t, Color.Empty);
+        }
 
         /// <summary>
         /// Height of the reserved scale strip, in pixels. Derived from the text size
@@ -381,6 +470,118 @@ namespace NostalgiaPlus
             catch { return false; }
         }
 
+        // ---- themes ----
+        //
+        // Stored beside the presets and in the same format, but carrying only the colour
+        // keys - so a theme can be applied on top of any preset without dragging that
+        // preset's analysis settings along with it.
+
+        private static string ThemeDir(string storageDir)
+        {
+            return Path.Combine(storageDir, "Themes");
+        }
+
+        public static string[] ListThemes(string storageDir)
+        {
+            try
+            {
+                string dir = ThemeDir(storageDir);
+                if (!Directory.Exists(dir)) return new string[0];
+                string[] files = Directory.GetFiles(dir, "*.theme");
+                var names = new string[files.Length];
+                for (int i = 0; i < files.Length; i++)
+                    names[i] = Path.GetFileNameWithoutExtension(files[i]);
+                Array.Sort(names, StringComparer.OrdinalIgnoreCase);
+                return names;
+            }
+            catch { return new string[0]; }
+        }
+
+        public bool SaveTheme(string storageDir, string name)
+        {
+            name = SanitiseName(name);
+            if (name.Length == 0) return false;
+            try
+            {
+                string dir = ThemeDir(storageDir);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                var sb = new System.Text.StringBuilder();
+                sb.AppendLine("# Nostalgia+ theme");
+                foreach (ThemeSlot t in Enum.GetValues(typeof(ThemeSlot)))
+                    sb.AppendLine("Col" + t + "=" + FormatColor(GetSlot(t)));
+                File.WriteAllText(Path.Combine(dir, name + ".theme"), sb.ToString());
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public bool LoadTheme(string storageDir, string name)
+        {
+            try
+            {
+                string file = Path.Combine(ThemeDir(storageDir), SanitiseName(name) + ".theme");
+                if (!File.Exists(file)) return false;
+                var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (string raw in File.ReadAllLines(file))
+                {
+                    string line = raw.Trim();
+                    if (line.Length == 0 || line[0] == '#') continue;
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    map[line.Substring(0, eq).Trim()] = line.Substring(eq + 1).Trim();
+                }
+                foreach (ThemeSlot t in Enum.GetValues(typeof(ThemeSlot)))
+                    SetSlot(t, ParseColor(map, "Col" + t, Color.Empty));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public bool DeleteTheme(string storageDir, string name)
+        {
+            try
+            {
+                string file = Path.Combine(ThemeDir(storageDir), SanitiseName(name) + ".theme");
+                if (!File.Exists(file)) return false;
+                File.Delete(file);
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Takes the chrome colours from MusicBee's current skin, so the panel sits in
+        /// the window rather than on it. Only the surfaces and text are taken - the
+        /// spectrogram palette is a measurement scale and is left alone.
+        /// </summary>
+        public void ThemeFromSkin(Func<int, int, int, int> skinColour)
+        {
+            if (skinColour == null) return;
+            try
+            {
+                // SkinSubPanel background and foreground, in the default element state.
+                Color back = Color.FromArgb(unchecked((int)0xFF000000) | skinColour(0, 0, 1));
+                Color text = Color.FromArgb(unchecked((int)0xFF000000) | skinColour(0, 0, 3));
+                Color border = Color.FromArgb(unchecked((int)0xFF000000) | skinColour(0, 0, 0));
+
+                ColBackground = back;
+                ColPanel = Mix(back, text, 0.10);
+                ColAxisText = text;
+                ColUnits = Mix(text, border, 0.45);
+                ColGridMajor = text;
+                ColGridMinor = text;
+            }
+            catch { }
+        }
+
+        private static Color Mix(Color a, Color b, double t)
+        {
+            return Color.FromArgb(
+                (int)(a.R + (b.R - a.R) * t),
+                (int)(a.G + (b.G - a.G) * t),
+                (int)(a.B + (b.B - a.B) * t));
+        }
+
         public bool DeleteUserPreset(string storageDir, string name)
         {
             try
@@ -489,6 +690,8 @@ namespace NostalgiaPlus
                 s.ImmColourFollows = ParseBool(map, "ImmColourFollows", s.ImmColourFollows);
                 s.ColourFollowDegrees = (int)ParseDouble(map, "ColourFollowDegrees", s.ColourFollowDegrees);
                 s.ImmCinematic = ParseBool(map, "ImmCinematic", s.ImmCinematic);
+                foreach (ThemeSlot t in Enum.GetValues(typeof(ThemeSlot)))
+                    s.SetSlot(t, ParseColor(map, "Col" + t, s.GetSlot(t)));
             }
             catch { /* a corrupt file should never stop the panel from opening */ }
             return s;
@@ -580,6 +783,8 @@ namespace NostalgiaPlus
                 sb.AppendLine("ImmColourFollows=" + ImmColourFollows);
                 sb.AppendLine("ColourFollowDegrees=" + ColourFollowDegrees);
                 sb.AppendLine("ImmCinematic=" + ImmCinematic);
+                foreach (ThemeSlot t in Enum.GetValues(typeof(ThemeSlot)))
+                    sb.AppendLine("Col" + t + "=" + FormatColor(GetSlot(t)));
                 File.WriteAllText(file, sb.ToString());
             }
             catch { }
@@ -602,6 +807,27 @@ namespace NostalgiaPlus
             if (map.TryGetValue(key, out v) &&
                 double.TryParse(v, NumberStyles.Float, CultureInfo.InvariantCulture, out d)) return d;
             return fallback;
+        }
+
+        /// <summary>Colours read and write as #AARRGGBB, or "auto" for "follow the palette".</summary>
+        private static Color ParseColor(Dictionary<string, string> map, string key, Color fallback)
+        {
+            string v;
+            if (!map.TryGetValue(key, out v)) return fallback;
+            v = v.Trim();
+            if (v.Length == 0 || string.Equals(v, "auto", StringComparison.OrdinalIgnoreCase))
+                return Color.Empty;
+            if (v[0] == '#') v = v.Substring(1);
+            uint argb;
+            if (!uint.TryParse(v, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out argb))
+                return fallback;
+            return Color.FromArgb(unchecked((int)argb));
+        }
+
+        private static string FormatColor(Color c)
+        {
+            if (c.IsEmpty) return "auto";
+            return "#" + ((uint)c.ToArgb()).ToString("X8", CultureInfo.InvariantCulture);
         }
 
         private static bool ParseBool(Dictionary<string, string> map, string key, bool fallback)
