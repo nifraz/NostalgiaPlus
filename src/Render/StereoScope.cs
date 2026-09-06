@@ -273,7 +273,16 @@ namespace NostalgiaPlus.Render
                     int y = top + h - 1 - (int)Math.Round(_map.FreqToX(freqs[i]));
                     if (y < top || y >= top + h) continue;
                     bool isMajor = i >= major.Count || major[i];
-                    g.DrawLine(isMajor ? pen : minorPen, Bounds.Left, y, Bounds.Right, y);
+                    Pen linePen = isMajor ? pen : minorPen;
+
+                    // Across the image only. It used to run the full width, straight
+                    // through the label columns - which is the whole reason the labels
+                    // were pushed a line-height above their own row: centred on the row,
+                    // the line struck through the text. Stopping it at the panes lets
+                    // the labels sit where they belong, and the columns carry a tick
+                    // instead, exactly as the time and level scales do.
+                    for (int q = 0; q < _panes.Length; q++)
+                        g.DrawLine(linePen, _panes[q].Bounds.Left, y, _panes[q].Bounds.Right, y);
 
                     if (!showLabels) continue;
                     // The overlay bar holds the title on the left and the meters on the
@@ -287,10 +296,30 @@ namespace NostalgiaPlus.Render
                     SolidBrush ink = isMajor ? brush : minorBrush;
                     SizeF sz = g.MeasureString(primary, labelFont);
                     float lineH = sz.Height - 2;
-                    // Keep the text beside its own row rather than letting the topmost
-                    // one ride up into the scale strip, and clear of the unit caption
-                    // when that is sitting at the top of the axis instead.
-                    float ly = Math.Max(top + unitFloor, y - 13);
+
+                    // Centred on the row it names. The old placement was a hardcoded
+                    // 13px above the line - roughly one line height, so a label pointed
+                    // at a row it was not naming, which on a note axis is a couple of
+                    // semitones out. Clamped so the end labels stay inside the axis and
+                    // clear of the unit caption when that sits on the axis itself.
+                    float blockH = secondary != null ? lineH + sz.Height : sz.Height;
+                    float ly = y - blockH / 2f;
+                    if (ly < top + unitFloor) ly = top + unitFloor;
+                    if (ly + blockH > top + h) ly = top + h - blockH;
+
+                    // A tick on the edge of each column that faces the image, so the
+                    // column reads as a ruler against the picture.
+                    const int Tick = 4;
+                    if (GutterRect.Width >= 22)
+                    {
+                        g.DrawLine(linePen, GutterRect.Left, y, GutterRect.Left + Tick, y);
+                        g.DrawLine(linePen, GutterRect.Right - Tick, y, GutterRect.Right, y);
+                    }
+                    if (OuterLeftRect.Width > 0 && outerOk)
+                    {
+                        g.DrawLine(linePen, OuterLeftRect.Right - Tick, y, OuterLeftRect.Right, y);
+                        g.DrawLine(linePen, OuterRightRect.Left, y, OuterRightRect.Left + Tick, y);
+                    }
 
                     if (GutterRect.Width >= 22)
                     {

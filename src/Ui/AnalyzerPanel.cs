@@ -322,8 +322,11 @@ namespace NostalgiaPlus.Ui
                 g.DrawRectangle(outline, barX, top, barW, bot - top);
             using (var brush = new SolidBrush(Color.FromArgb(190, 225, 225, 228)))
             {
-                g.DrawString(_scope.CeilingDb.ToString("0"), _fontSmall, brush, barX + barW + 1, top - 4);
-                g.DrawString(_scope.FloorDb.ToString("0"), _fontSmall, brush, barX + barW + 1, bot - 10);
+                // Centred on the end each value belongs to, like every other scale here.
+                string hi = _scope.CeilingDb.ToString("0"), lo = _scope.FloorDb.ToString("0");
+                float th = g.MeasureString(hi, _fontSmall).Height;
+                g.DrawString(hi, _fontSmall, brush, barX + barW + 3, top - th / 2);
+                g.DrawString(lo, _fontSmall, brush, barX + barW + 3, bot - th / 2);
             }
         }
 
