@@ -76,6 +76,10 @@ namespace NostalgiaPlus
         public bool SyncHover = true;
         /// <summary>Stamp the hovered frequency onto the frequency axis itself.</summary>
         public bool ShowHoverPin = true;
+        /// <summary>Ghost lines at integer multiples of the hovered frequency.</summary>
+        public bool ShowHarmonics = false;
+        /// <summary>Master switch for all fullscreen on-screen display.</summary>
+        public bool FsShowOsd = true;
         public int BarSize = 6;
         public int LedSegment = 5;
         public int PanelCurveWidth = 90;
@@ -240,6 +244,8 @@ namespace NostalgiaPlus
                 s.ShowOuterLabels = ParseBool(map, "ShowOuterLabels", s.ShowOuterLabels);
                 s.SyncHover = ParseBool(map, "SyncHover", s.SyncHover);
                 s.ShowHoverPin = ParseBool(map, "ShowHoverPin", s.ShowHoverPin);
+                s.ShowHarmonics = ParseBool(map, "ShowHarmonics", s.ShowHarmonics);
+                s.FsShowOsd = ParseBool(map, "FsShowOsd", s.FsShowOsd);
                 s.BarSize = (int)ParseDouble(map, "BarSize", s.BarSize);
                 s.LedSegment = (int)ParseDouble(map, "LedSegment", s.LedSegment);
                 s.PanelCurveWidth = (int)ParseDouble(map, "PanelCurveWidth", s.PanelCurveWidth);
@@ -310,6 +316,8 @@ namespace NostalgiaPlus
                 sb.AppendLine("ShowOuterLabels=" + ShowOuterLabels);
                 sb.AppendLine("SyncHover=" + SyncHover);
                 sb.AppendLine("ShowHoverPin=" + ShowHoverPin);
+                sb.AppendLine("ShowHarmonics=" + ShowHarmonics);
+                sb.AppendLine("FsShowOsd=" + FsShowOsd);
                 sb.AppendLine("BarSize=" + BarSize);
                 sb.AppendLine("LedSegment=" + LedSegment);
                 sb.AppendLine("PanelCurveWidth=" + PanelCurveWidth);

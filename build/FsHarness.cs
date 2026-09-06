@@ -95,16 +95,22 @@ class FsHarness
         Console.WriteLine(line);
     }
 
-    static void SetHover(object view, int x, int y)
+    // Both views expose pointer state through a private HoverInfo; the harness has no
+    // real cursor to move, so poke a position (and optionally a drag) straight in.
+    static void SetHover(object view, int x, int y, int ox, int oy)
     {
         var f = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
-        var t = view.GetType();
-        var fx = t.GetField("_mouseX", f);
-        var fy = t.GetField("_mouseY", f);
-        var fin = t.GetField("_mouseIn", f);
-        if (fx != null) fx.SetValue(view, x);
-        if (fy != null) fy.SetValue(view, y);
-        if (fin != null) fin.SetValue(view, true);
+        var fi = view.GetType().GetField("_hover", f);
+        if (fi == null) return;
+        object h = fi.GetValue(view);
+        var ht = h.GetType();
+        ht.GetField("Cursor").SetValue(h, new Point(x, y));
+        ht.GetField("Active").SetValue(h, true);
+        if (ox >= 0)
+        {
+            ht.GetField("Origin").SetValue(h, new Point(ox, oy));
+            ht.GetField("Measuring").SetValue(h, true);
+        }
     }
 
     [STAThread]
@@ -123,6 +129,7 @@ class FsHarness
         settings.MirrorLeftPane = true;   // verify the new centre-out arrangement
         settings.FsAutoHide = false;      // keep axes and readout visible for the capture
         settings.CurveWidthPct = 12;
+        settings.ShowHarmonics = true;
         ApplyFlags(settings);
 
         // Not started, so no WASAPI thread claims the endpoint - we own the ring.
@@ -152,7 +159,7 @@ class FsHarness
         }
 
         // Hover over the left pane so the synced readout is captured.
-        SetHover(view, 520, 430);
+        SetHover(view, 520, 430, 300, 620);
         view.Invalidate();
         Application.DoEvents();
         Thread.Sleep(80);
@@ -212,7 +219,7 @@ class FsHarness
             Thread.Sleep(2);
         }
 
-        SetHover(panel, 380, 200);
+        SetHover(panel, 380, 200, -1, -1);
         panel.Invalidate();
         Application.DoEvents();
         Thread.Sleep(80);

@@ -6,8 +6,15 @@ using NostalgiaPlus.Render;
 namespace NostalgiaPlus.Ui
 {
     /// <summary>
-    /// Builds the right-click menu for both views, grouped so a long option list stays
-    /// navigable. Kept in one place so the docked panel and the fullscreen view cannot
+    /// Builds the right-click menu for both views.
+    ///
+    /// Organised so the top level reads as a sequence rather than a pile: what is being
+    /// analysed, how it is analysed, how it is drawn, then the view itself and the
+    /// actions. Separators mark those four bands. Groups are kept to a similar size -
+    /// anything with fewer than three entries is folded into its neighbour rather than
+    /// costing a submenu of its own.
+    ///
+    /// One builder for both views, so the docked panel and the fullscreen view cannot
     /// drift apart as options are added.
     /// </summary>
     public static class MenuFactory
@@ -30,20 +37,31 @@ namespace NostalgiaPlus.Ui
         {
             menu.Items.Clear();
 
+            // What is being shown
             menu.Items.Add(Presets(s, o));
             menu.Items.Add(Channels(s, o));
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            // How it is measured
             menu.Items.Add(Analysis(s, o));
-            menu.Items.Add(Display(s, o));
-            menu.Items.Add(Traces(s, o));
-            menu.Items.Add(AxesAndGrid(s, o));
+            menu.Items.Add(Levels(s, o));
+
+            menu.Items.Add(new ToolStripSeparator());
+
+            // How it is drawn
+            menu.Items.Add(Graph(s, o));
+            menu.Items.Add(Axes(s, o));
+            menu.Items.Add(Hover(s, o));
             menu.Items.Add(Colour(s, o));
-            menu.Items.Add(Range(s, o));
-            menu.Items.Add(Scroll(s, o));
+
+            menu.Items.Add(new ToolStripSeparator());
+
             menu.Items.Add(View(s, o));
 
             menu.Items.Add(new ToolStripSeparator());
 
-            var freeze = new ToolStripMenuItem("Freeze  (Space)");
+            var freeze = new ToolStripMenuItem("Freeze  (Space or click)");
             freeze.Checked = o.IsFrozen != null && o.IsFrozen();
             freeze.Click += delegate { o.ToggleFreeze(); };
             menu.Items.Add(freeze);
@@ -57,7 +75,7 @@ namespace NostalgiaPlus.Ui
             }
         }
 
-        // ---- groups ----
+        // ---------------- what is being shown ----------------
 
         private static ToolStripMenuItem Presets(Settings s, Options o)
         {
@@ -90,6 +108,8 @@ namespace NostalgiaPlus.Ui
             return m;
         }
 
+        // ---------------- how it is measured ----------------
+
         private static ToolStripMenuItem Analysis(Settings s, Options o)
         {
             var m = new ToolStripMenuItem("Analysis");
@@ -116,7 +136,8 @@ namespace NostalgiaPlus.Ui
             foreach (AnalysisQuality q in Enum.GetValues(typeof(AnalysisQuality)))
             {
                 AnalysisQuality captured = q;
-                string label = q == AnalysisQuality.Fast ? "Fast (4K)"
+                string label = q == AnalysisQuality.LowLatency ? "Low latency (4K/1K/256)"
+                             : q == AnalysisQuality.Fast ? "Fast (4K)"
                              : q == AnalysisQuality.Balanced ? "Balanced (16K/4K/1K)"
                              : "High (32K/8K/2K/512)";
                 var mi = new ToolStripMenuItem(label);
@@ -137,6 +158,8 @@ namespace NostalgiaPlus.Ui
                 tilt.DropDownItems.Add(mi);
             }
             m.DropDownItems.Add(tilt);
+
+            m.DropDownItems.Add(new ToolStripSeparator());
 
             var interp = new ToolStripMenuItem("Interpolation");
             foreach (CurveInterpolation ci in Enum.GetValues(typeof(CurveInterpolation)))
@@ -174,11 +197,51 @@ namespace NostalgiaPlus.Ui
             return m;
         }
 
-        private static ToolStripMenuItem Display(Settings s, Options o)
+        private static ToolStripMenuItem Levels(Settings s, Options o)
         {
-            var m = new ToolStripMenuItem("Display");
+            var m = new ToolStripMenuItem("Levels and time");
 
-            var style = new ToolStripMenuItem("Curve style");
+            AddToggle(m.DropDownItems, "Auto dynamic range", s.AdaptiveRange,
+                      delegate { s.AdaptiveRange = !s.AdaptiveRange; o.Changed(false); });
+
+            var contrast = new ToolStripMenuItem("Contrast");
+            double[] cs = { 0.15, 0.25, 0.40, 0.55, 0.70, 0.82 };
+            string[] names = { "Flattest", "Low", "Medium", "High", "Very high", "Extreme" };
+            for (int i = 0; i < cs.Length; i++)
+            {
+                double captured = cs[i];
+                var mi = new ToolStripMenuItem(names[i] + "   (" + (cs[i] * 100).ToString("0") + "% floor)");
+                mi.Checked = Math.Abs(s.Contrast - cs[i]) < 0.01;
+                mi.Click += delegate { s.Contrast = captured; o.Changed(false); };
+                contrast.DropDownItems.Add(mi);
+            }
+            m.DropDownItems.Add(contrast);
+
+            var speed = new ToolStripMenuItem("Scroll speed");
+            int[] divs = { 1, 2, 4, 8 };
+            foreach (int d in divs)
+            {
+                int captured = d;
+                double secs = o.ScrollPixels * d / (double)Math.Max(1, s.TargetFps);
+                var mi = new ToolStripMenuItem(
+                    (d == 1 ? "Fast" : d == 2 ? "Medium" : d == 4 ? "Slow" : "Very slow")
+                    + string.Format("   (~{0:0}s visible)", secs));
+                mi.Checked = s.ScrollDivider == d;
+                mi.Click += delegate { s.ScrollDivider = captured; o.Changed(false); };
+                speed.DropDownItems.Add(mi);
+            }
+            m.DropDownItems.Add(speed);
+
+            return m;
+        }
+
+        // ---------------- how it is drawn ----------------
+
+        private static ToolStripMenuItem Graph(Settings s, Options o)
+        {
+            var m = new ToolStripMenuItem("Graph");
+
+            var style = new ToolStripMenuItem("Style");
             foreach (CurveStyle cs in Enum.GetValues(typeof(CurveStyle)))
             {
                 CurveStyle captured = cs;
@@ -189,43 +252,13 @@ namespace NostalgiaPlus.Ui
             }
             m.DropDownItems.Add(style);
 
-            var bar = new ToolStripMenuItem("Bar size");
-            int[] sizes = { 3, 6, 10, 16 };
-            foreach (int bv in sizes)
-            {
-                int captured = bv;
-                var mi = new ToolStripMenuItem(bv + " px");
-                mi.Checked = s.BarSize == bv;
-                mi.Click += delegate { s.BarSize = captured; o.Changed(false); };
-                bar.DropDownItems.Add(mi);
-            }
-            m.DropDownItems.Add(bar);
-
-            var led = new ToolStripMenuItem("LED segment");
-            int[] segs = { 3, 5, 8, 12 };
-            foreach (int lv in segs)
-            {
-                int captured = lv;
-                var mi = new ToolStripMenuItem(lv + " px");
-                mi.Checked = s.LedSegment == lv;
-                mi.Click += delegate { s.LedSegment = captured; o.Changed(false); };
-                led.DropDownItems.Add(mi);
-            }
-            m.DropDownItems.Add(led);
-
-            AddToggle(m.DropDownItems, "Solid fill", s.SolidFill,
-                      delegate { s.SolidFill = !s.SolidFill; o.Changed(false); });
-            AddToggle(m.DropDownItems, "Curve on the left of each pane", s.CurveOnLeft,
-                      delegate { s.CurveOnLeft = !s.CurveOnLeft; o.Changed(true); });
-
-            // Graph and spectrogram share each pane, so one ratio sizes both.
-            var size = new ToolStripMenuItem("Graph / spectrogram size");
+            var size = new ToolStripMenuItem("Size");
             int[] pcts = { 0, 8, 12, 18, 25, 33, 45 };
             foreach (int pv in pcts)
             {
                 int captured = pv;
                 string label = pv == 0
-                    ? "No graph  (spectrogram only)"
+                    ? "No graph   (spectrogram only)"
                     : "Graph " + pv + "%   /   spectrogram " + (100 - pv) + "%";
                 var mi = new ToolStripMenuItem(label);
                 mi.Checked = s.CurveWidthPct == pv;
@@ -234,30 +267,7 @@ namespace NostalgiaPlus.Ui
             }
             m.DropDownItems.Add(size);
 
-            AddToggle(m.DropDownItems, "Mirror left pane  (sound emerges from the middle)",
-                      s.MirrorLeftPane,
-                      delegate { s.MirrorLeftPane = !s.MirrorLeftPane; o.Changed(true); });
-
-            return m;
-        }
-
-        private static ToolStripMenuItem Traces(Settings s, Options o)
-        {
-            var m = new ToolStripMenuItem("Traces");
-            AddToggle(m.DropDownItems, "Maximum (peak hold)", s.ShowMax,
-                      delegate { s.ShowMax = !s.ShowMax; o.Changed(false); });
-            AddToggle(m.DropDownItems, "Average", s.ShowAvg,
-                      delegate { s.ShowAvg = !s.ShowAvg; o.Changed(false); });
-            AddToggle(m.DropDownItems, "Minimum", s.ShowMin,
-                      delegate { s.ShowMin = !s.ShowMin; o.Changed(false); });
-            return m;
-        }
-
-        private static ToolStripMenuItem AxesAndGrid(Settings s, Options o)
-        {
-            var m = new ToolStripMenuItem("Axes and grid");
-
-            var bg = new ToolStripMenuItem("Graph background");
+            var bg = new ToolStripMenuItem("Background");
             foreach (GraphBackground b in Enum.GetValues(typeof(GraphBackground)))
             {
                 GraphBackground captured = b;
@@ -268,23 +278,93 @@ namespace NostalgiaPlus.Ui
             }
             m.DropDownItems.Add(bg);
 
+            var bar = new ToolStripMenuItem("Bar and LED size");
+            int[] sizes = { 3, 6, 10, 16 };
+            foreach (int bv in sizes)
+            {
+                int captured = bv;
+                var mi = new ToolStripMenuItem("Bar " + bv + " px");
+                mi.Checked = s.BarSize == bv;
+                mi.Click += delegate { s.BarSize = captured; o.Changed(false); };
+                bar.DropDownItems.Add(mi);
+            }
+            bar.DropDownItems.Add(new ToolStripSeparator());
+            int[] segs = { 3, 5, 8, 12 };
+            foreach (int lv in segs)
+            {
+                int captured = lv;
+                var mi = new ToolStripMenuItem("LED segment " + lv + " px");
+                mi.Checked = s.LedSegment == lv;
+                mi.Click += delegate { s.LedSegment = captured; o.Changed(false); };
+                bar.DropDownItems.Add(mi);
+            }
+            m.DropDownItems.Add(bar);
+
+            m.DropDownItems.Add(new ToolStripSeparator());
+
+            AddToggle(m.DropDownItems, "Maximum trace (peak hold)", s.ShowMax,
+                      delegate { s.ShowMax = !s.ShowMax; o.Changed(false); });
+            AddToggle(m.DropDownItems, "Average trace", s.ShowAvg,
+                      delegate { s.ShowAvg = !s.ShowAvg; o.Changed(false); });
+            AddToggle(m.DropDownItems, "Minimum trace", s.ShowMin,
+                      delegate { s.ShowMin = !s.ShowMin; o.Changed(false); });
+            AddToggle(m.DropDownItems, "Solid fill", s.SolidFill,
+                      delegate { s.SolidFill = !s.SolidFill; o.Changed(false); });
+
+            m.DropDownItems.Add(new ToolStripSeparator());
+
+            AddToggle(m.DropDownItems, "Graph on the left of each pane", s.CurveOnLeft,
+                      delegate { s.CurveOnLeft = !s.CurveOnLeft; o.Changed(true); });
+            AddToggle(m.DropDownItems, "Mirror left pane  (sound from the middle)  (M)",
+                      s.MirrorLeftPane,
+                      delegate { s.MirrorLeftPane = !s.MirrorLeftPane; o.Changed(true); });
+
+            return m;
+        }
+
+        private static ToolStripMenuItem Axes(Settings s, Options o)
+        {
+            var m = new ToolStripMenuItem("Axes and grid");
+
+            bool grid = o.IsFullscreen ? s.FsShowGrid : s.ShowGrid;
+            AddToggle(m.DropDownItems, "Gridlines  (G)", grid, delegate
+            {
+                if (o.IsFullscreen) s.FsShowGrid = !s.FsShowGrid; else s.ShowGrid = !s.ShowGrid;
+                o.Changed(false);
+            });
+            AddToggle(m.DropDownItems, "Semitone gridlines", s.ShowSemitones,
+                      delegate { s.ShowSemitones = !s.ShowSemitones; o.Changed(false); });
+
+            m.DropDownItems.Add(new ToolStripSeparator());
+
             AddToggle(m.DropDownItems, "dB scale on graphs", s.ShowDbScale,
                       delegate { s.ShowDbScale = !s.ShowDbScale; o.Changed(false); });
             AddToggle(m.DropDownItems, "Time markers on spectrograms", s.ShowTimeMarks,
                       delegate { s.ShowTimeMarks = !s.ShowTimeMarks; o.Changed(false); });
-            AddToggle(m.DropDownItems, "Semitone gridlines", s.ShowSemitones,
-                      delegate { s.ShowSemitones = !s.ShowSemitones; o.Changed(false); });
             AddToggle(m.DropDownItems, "Note labels at outer edges", s.ShowOuterLabels,
                       delegate { s.ShowOuterLabels = !s.ShowOuterLabels; o.Changed(true); });
+            AddToggle(m.DropDownItems, "Channel labels", s.ShowLabels,
+                      delegate { s.ShowLabels = !s.ShowLabels; o.Changed(false); });
+
+            return m;
+        }
+
+        private static ToolStripMenuItem Hover(Settings s, Options o)
+        {
+            var m = new ToolStripMenuItem("Hover");
+            AddToggle(m.DropDownItems, "Readout", s.ShowHud,
+                      delegate { s.ShowHud = !s.ShowHud; o.Changed(false); });
+            AddToggle(m.DropDownItems, "Sync across both panes", s.SyncHover,
+                      delegate { s.SyncHover = !s.SyncHover; o.Changed(false); });
+            AddToggle(m.DropDownItems, "Pin note on the axis", s.ShowHoverPin,
+                      delegate { s.ShowHoverPin = !s.ShowHoverPin; o.Changed(false); });
+            AddToggle(m.DropDownItems, "Harmonic ruler", s.ShowHarmonics,
+                      delegate { s.ShowHarmonics = !s.ShowHarmonics; o.Changed(false); });
 
             m.DropDownItems.Add(new ToolStripSeparator());
-
-            AddToggle(m.DropDownItems, "Hover readout", s.ShowHud,
-                      delegate { s.ShowHud = !s.ShowHud; o.Changed(false); });
-            AddToggle(m.DropDownItems, "Sync hover across both panes", s.SyncHover,
-                      delegate { s.SyncHover = !s.SyncHover; o.Changed(false); });
-            AddToggle(m.DropDownItems, "Pin hovered note on the axis", s.ShowHoverPin,
-                      delegate { s.ShowHoverPin = !s.ShowHoverPin; o.Changed(false); });
+            var note = new ToolStripMenuItem("Click freezes  ·  drag measures");
+            note.Enabled = false;
+            m.DropDownItems.Add(note);
             return m;
         }
 
@@ -302,50 +382,16 @@ namespace NostalgiaPlus.Ui
             return m;
         }
 
-        private static ToolStripMenuItem Range(Settings s, Options o)
-        {
-            var m = new ToolStripMenuItem("Level range");
-            AddToggle(m.DropDownItems, "Auto dynamic range", s.AdaptiveRange,
-                      delegate { s.AdaptiveRange = !s.AdaptiveRange; o.Changed(false); });
-
-            var contrast = new ToolStripMenuItem("Contrast");
-            double[] cs = { 0.15, 0.25, 0.40, 0.55, 0.70, 0.82 };
-            string[] names = { "Flattest", "Low", "Medium", "High", "Very high", "Extreme" };
-            for (int i = 0; i < cs.Length; i++)
-            {
-                double captured = cs[i];
-                var mi = new ToolStripMenuItem(names[i] + "  (" + (cs[i] * 100).ToString("0") + "% floor)");
-                mi.Checked = Math.Abs(s.Contrast - cs[i]) < 0.01;
-                mi.Click += delegate { s.Contrast = captured; o.Changed(false); };
-                contrast.DropDownItems.Add(mi);
-            }
-            m.DropDownItems.Add(contrast);
-            return m;
-        }
-
-        private static ToolStripMenuItem Scroll(Settings s, Options o)
-        {
-            var m = new ToolStripMenuItem("Scroll speed");
-            int[] divs = { 1, 2, 4, 8 };
-            foreach (int d in divs)
-            {
-                int captured = d;
-                double secs = o.ScrollPixels * d / (double)Math.Max(1, s.TargetFps);
-                var mi = new ToolStripMenuItem(
-                    (d == 1 ? "Fast" : d == 2 ? "Medium" : d == 4 ? "Slow" : "Very slow")
-                    + string.Format("  (~{0:0}s visible)", secs));
-                mi.Checked = s.ScrollDivider == d;
-                mi.Click += delegate { s.ScrollDivider = captured; o.Changed(false); };
-                m.DropDownItems.Add(mi);
-            }
-            return m;
-        }
+        // ---------------- the view itself ----------------
 
         private static ToolStripMenuItem View(Settings s, Options o)
         {
             var m = new ToolStripMenuItem("View");
             if (o.IsFullscreen)
             {
+                AddToggle(m.DropDownItems, "On-screen display  (H)", s.FsShowOsd,
+                          delegate { s.FsShowOsd = !s.FsShowOsd; o.Changed(false); });
+
                 if (o.ToggleImmersive != null)
                 {
                     var imm = new ToolStripMenuItem("Immersive mode  (I)");
@@ -357,6 +403,11 @@ namespace NostalgiaPlus.Ui
                           delegate { s.FsGlow = !s.FsGlow; o.Changed(false); });
                 AddToggle(m.DropDownItems, "Hide labels when idle", s.FsAutoHide,
                           delegate { s.FsAutoHide = !s.FsAutoHide; o.Changed(false); });
+
+                m.DropDownItems.Add(new ToolStripSeparator());
+
+                AddToggle(m.DropDownItems, "Meters and track info  (O)", s.FsShowOverlays,
+                          delegate { s.FsShowOverlays = !s.FsShowOverlays; o.Changed(false); });
                 AddToggle(m.DropDownItems, "Waveform lanes  (W)", s.FsShowWaveform,
                           delegate { s.FsShowWaveform = !s.FsShowWaveform; o.Changed(true); });
 
@@ -371,25 +422,20 @@ namespace NostalgiaPlus.Ui
                     wave.DropDownItems.Add(mi);
                 }
                 m.DropDownItems.Add(wave);
-                AddToggle(m.DropDownItems, "Meters and track info  (O)", s.FsShowOverlays,
-                          delegate { s.FsShowOverlays = !s.FsShowOverlays; o.Changed(false); });
-                AddToggle(m.DropDownItems, "Grid  (G)", s.FsShowGrid,
-                          delegate { s.FsShowGrid = !s.FsShowGrid; o.Changed(false); });
             }
             else
             {
-                AddToggle(m.DropDownItems, "Grid", s.ShowGrid,
-                          delegate { s.ShowGrid = !s.ShowGrid; o.Changed(false); });
-                AddToggle(m.DropDownItems, "Channel labels", s.ShowLabels,
-                          delegate { s.ShowLabels = !s.ShowLabels; o.Changed(false); });
                 AddToggle(m.DropDownItems, "Colour bar", s.ShowColorBar,
                           delegate { s.ShowColorBar = !s.ShowColorBar; o.Changed(true); });
                 AddToggle(m.DropDownItems, "Status line", s.ShowStatus,
                           delegate { s.ShowStatus = !s.ShowStatus; o.Changed(false); });
+
+                m.DropDownItems.Add(new ToolStripSeparator());
+
                 int screenH = Screen.PrimaryScreen.WorkingArea.Height;
                 var height = new ToolStripMenuItem("Panel height");
-                int[] pcts = { 25, 33, 50, 66, 75 };
-                foreach (int pct in pcts)
+                int[] hpcts = { 25, 33, 50, 66, 75 };
+                foreach (int pct in hpcts)
                 {
                     int px = screenH * pct / 100;
                     int captured = px;

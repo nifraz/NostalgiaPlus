@@ -61,8 +61,8 @@ namespace NostalgiaPlus.Ui
         private string _title = "", _artist = "", _album = "";
         private DateTime _hintUntil, _lastActivity = DateTime.UtcNow, _infoUntil = DateTime.MinValue;
         private bool _cursorHidden;
-        private int _mouseX = -1, _mouseY = -1;
-        private bool _mouseIn;
+        private readonly HoverInfo _hover = new HoverInfo();
+        private bool _mouseDown, _dragged;
 
         private const double IdleHoldSeconds = 3.0;
         private const double IdleFadeSeconds = 1.5;
@@ -441,7 +441,9 @@ namespace NostalgiaPlus.Ui
             // and, at these sizes on a dark ground, indistinguishable.
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
             g.Clear(Palette.Background(_lut));
-            double furniture = FurnitureAlpha();
+            // The OSD switch gates every drawn annotation; gridlines stay because they
+            // are part of reading the image rather than chrome on top of it.
+            double furniture = _settings.FsShowOsd ? FurnitureAlpha() : 0.0;
             if (furniture <= 0.001 && !_cursorHidden)
             {
                 _cursorHidden = true;
@@ -459,17 +461,17 @@ namespace NostalgiaPlus.Ui
                 _scope.DrawPaneLabels(g, _fontSmall, furniture, _settings.FsShowOverlays ? 84 : 0);
             }
 
-            if (_settings.ShowHud && _mouseIn && furniture > 0.004)
+            if (_settings.ShowHud && _hover.Active && _settings.FsShowOsd)
             {
                 lock (_gate)
                 {
-                    _scope.DrawHover(g, new Point(_mouseX, _mouseY), _settings, _fontSmall, _fontTiny);
+                    _scope.DrawHover(g, _hover, _settings, _fontSmall, _fontTiny);
                 }
             }
             if (_settings.FsShowWaveform && _waveARect.Height > 0) DrawWaveforms(g);
-            if (_settings.FsShowOverlays) DrawOverlays(g, furniture);
-            if (furniture > 0.004) DrawButtons(g, furniture);
-            DrawHint(g);
+            if (_settings.FsShowOverlays && _settings.FsShowOsd) DrawOverlays(g, furniture);
+            if (furniture > 0.004 && _settings.FsShowOsd) DrawButtons(g, furniture);
+            if (_settings.FsShowOsd) DrawHint(g);
         }
 
         private void DrawWaveforms(Graphics g)
@@ -632,7 +634,7 @@ namespace NostalgiaPlus.Ui
             if (DateTime.UtcNow > _hintUntil) return;
             string text = (_settings.FsImmersive ? "IMMERSIVE   " : "") +
                           "Click a button to cycle it    Right-click for all options    " +
-                          "I immersive    Esc exit    Space freeze    " +
+                          "I immersive    H hide OSD    Esc exit    Space freeze    " +
                           _scope.Analyzer.DescribeResolution() + "    " +
                           _fps.ToString("0") + " fps  " + _analysisMs.ToString("0.0") + " ms dsp  " +
                           _paintMs.ToString("0.0") + " ms paint";
@@ -650,14 +652,31 @@ namespace NostalgiaPlus.Ui
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            _mouseX = e.X; _mouseY = e.Y; _mouseIn = true;
+            _hover.Cursor = e.Location;
+            _hover.Active = true;
+            if (_mouseDown &&
+                (Math.Abs(e.X - _hover.Origin.X) > 4 || Math.Abs(e.Y - _hover.Origin.Y) > 4))
+            {
+                _dragged = true;
+                _hover.Measuring = true;
+            }
             Touch();
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
-            _mouseIn = false;
+            _hover.Active = false;
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button != MouseButtons.Left) return;
+            _mouseDown = false;
+            // A click freezes so a moment can be read without it scrolling away; a drag
+            // is a measurement and leaves its result on screen until the next press.
+            if (!_dragged) { _frozen = !_frozen; Invalidate(); }
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -667,6 +686,10 @@ namespace NostalgiaPlus.Ui
             if (e.Button != MouseButtons.Left) return;
             for (int i = 0; i < _buttons.Count; i++)
                 if (_buttons[i].Rect.Contains(e.Location)) { _buttons[i].Cycle(); return; }
+            _mouseDown = true;
+            _dragged = false;
+            _hover.Origin = e.Location;
+            _hover.Measuring = false;
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -686,6 +709,9 @@ namespace NostalgiaPlus.Ui
                     OnSettingsChanged(false); return true;
                 case Keys.G:
                     _settings.FsShowGrid = !_settings.FsShowGrid;
+                    OnSettingsChanged(false); return true;
+                case Keys.H:
+                    _settings.FsShowOsd = !_settings.FsShowOsd;
                     OnSettingsChanged(false); return true;
                 case Keys.B:
                     _settings.Style = Next(_settings.Style);

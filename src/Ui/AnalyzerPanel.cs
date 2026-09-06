@@ -39,8 +39,8 @@ namespace NostalgiaPlus.Ui
         private Rectangle _barRect;
         private Font _font, _fontSmall;
         private double _fps, _lastAnalysisMs;
-        private int _mouseX = -1, _mouseY = -1;
-        private bool _mouseIn;
+        private readonly HoverInfo _hover = new HoverInfo();
+        private bool _mouseDown, _dragged;
         private FullscreenView _fullscreen;
         private Bitmap _barCache;
         private int[] _barCacheLut;
@@ -261,8 +261,8 @@ namespace NostalgiaPlus.Ui
 
             if (_settings.ShowColorBar && _barRect.Width > 0) DrawColorBar(g);
             if (_settings.ShowStatus) DrawStatus(g);
-            if (_settings.ShowHud && _mouseIn)
-                _scope.DrawHover(g, new Point(_mouseX, _mouseY), _settings, _font, _fontSmall);
+            if (_settings.ShowHud && _hover.Active)
+                _scope.DrawHover(g, _hover, _settings, _font, _fontSmall);
         }
 
         private void DrawColorBar(Graphics g)
@@ -312,18 +312,38 @@ namespace NostalgiaPlus.Ui
         {
             base.OnMouseDown(e);
             if (!Focused) { try { Focus(); } catch { } }
+            if (e.Button != MouseButtons.Left) return;
+            _mouseDown = true;
+            _dragged = false;
+            _hover.Origin = e.Location;
+            _hover.Measuring = false;
+        }
+
+        protected override void OnMouseUp(MouseEventArgs e)
+        {
+            base.OnMouseUp(e);
+            if (e.Button != MouseButtons.Left) return;
+            _mouseDown = false;
+            if (!_dragged) { _frozen = !_frozen; Invalidate(); }
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
-            _mouseX = e.X; _mouseY = e.Y; _mouseIn = true;
+            _hover.Cursor = e.Location;
+            _hover.Active = true;
+            if (_mouseDown &&
+                (Math.Abs(e.X - _hover.Origin.X) > 4 || Math.Abs(e.Y - _hover.Origin.Y) > 4))
+            {
+                _dragged = true;
+                _hover.Measuring = true;
+            }
         }
 
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
-            _mouseIn = false;
+            _hover.Active = false;
             Invalidate();
         }
 

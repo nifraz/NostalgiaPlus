@@ -2,7 +2,7 @@ using System;
 
 namespace NostalgiaPlus.Dsp
 {
-    public enum AnalysisQuality { Fast, Balanced, High }
+    public enum AnalysisQuality { LowLatency, Fast, Balanced, High }
     public enum BandAggregate { Peak, Energy }
 
     /// <summary>
@@ -97,6 +97,15 @@ namespace NostalgiaPlus.Dsp
 
             switch (quality)
             {
+                case AnalysisQuality.LowLatency:
+                    // Every window ends at "now", so a band's effective time centre is
+                    // half its length ago: the 32K bass window of the High profile is
+                    // centred ~340 ms back while its 512 treble window is ~5 ms back, and
+                    // bass visibly trails treble on the same drum hit. Capping the largest
+                    // transform holds total delay near 43 ms at the cost of bass detail.
+                    sizes = new int[] { 4096, 1024, 256 };
+                    corners = new double[] { 600, 4000 };
+                    break;
                 case AnalysisQuality.Fast:
                     sizes = new int[] { 4096 };
                     corners = new double[0];

@@ -6,6 +6,16 @@ using NostalgiaPlus.Dsp;
 
 namespace NostalgiaPlus.Render
 {
+    /// <summary>Pointer state shared by both views so hover behaves identically.</summary>
+    public sealed class HoverInfo
+    {
+        public Point Cursor;
+        public bool Active;
+        /// <summary>A measurement from <see cref="Origin"/> to <see cref="Cursor"/> is showing.</summary>
+        public bool Measuring;
+        public Point Origin;
+    }
+
     /// <summary>
     /// Two side-by-side per-channel panes with a shared note gutter between them, plus
     /// the analysis that feeds them.
@@ -273,17 +283,19 @@ namespace NostalgiaPlus.Render
         /// gives every channel at once, which is the comparison the split layout exists
         /// for. Returns false when the cursor is not over a pane.
         /// </summary>
-        public bool DrawHover(Graphics g, Point mouse, Settings s, Font font, Font pinFont)
+        public bool DrawHover(Graphics g, HoverInfo h, Settings s, Font font, Font pinFont)
         {
-            if (_map == null || _panes.Length == 0) return false;
+            if (_map == null || _panes.Length == 0 || h == null || !h.Active) return false;
+            Point mouse = h.Cursor;
 
             ChannelPane hit = null;
             for (int i = 0; i < _panes.Length; i++)
                 if (_panes[i].Bounds.Contains(mouse)) hit = _panes[i];
             if (hit == null) return false;
 
-            int h = hit.SpectroRect.Height;
-            int bin = h - 1 - (mouse.Y - hit.SpectroRect.Top);
+            int hgt = hit.SpectroRect.Height;
+            int top = hit.SpectroRect.Top;
+            int bin = hgt - 1 - (mouse.Y - top);
             if (bin < 0 || bin >= _map.Width) return false;
 
             double freq = _map.Centres[bin];
@@ -388,6 +400,60 @@ namespace NostalgiaPlus.Render
                     }
                 }
             }
+            // Harmonic ruler: a line is either a fundamental or somebody's overtone, and
+            // this is the quickest way to tell which.
+            if (s.ShowHarmonics)
+            {
+                using (var hp = new Pen(Color.FromArgb(70, 160, 210, 255)))
+                using (var hb = new SolidBrush(Color.FromArgb(150, 170, 215, 255)))
+                    for (int n = 2; n <= 8; n++)
+                    {
+                        double hf = freq * n;
+                        if (hf > _map.FMax) break;
+                        int hy = top + hgt - 1 - (int)Math.Round(_map.FreqToX(hf));
+                        if (hy < top || hy >= top + hgt) continue;
+                        g.DrawLine(hp, Bounds.Left, hy, Bounds.Right, hy);
+                        g.DrawString("x" + n, pinFont ?? font, hb, Bounds.Left + 4, hy - 12);
+                    }
+            }
+
+            // Drag measurement: interval between two points, and how far apart in time.
+            if (h.Measuring)
+            {
+                int obin = hgt - 1 - (h.Origin.Y - hit.SpectroRect.Top);
+                if (obin >= 0 && obin < _map.Width)
+                {
+                    double ofreq = _map.Centres[obin];
+                    using (var mp = new Pen(Color.FromArgb(150, 255, 220, 120)))
+                    {
+                        g.DrawLine(mp, Bounds.Left, h.Origin.Y, Bounds.Right, h.Origin.Y);
+                        g.DrawLine(mp, h.Origin.X, h.Origin.Y, mouse.X, mouse.Y);
+                    }
+
+                    double semis = 12.0 * Math.Log(freq / ofreq, 2.0);
+                    string mtext = semis.ToString("+0.00;-0.00; 0.00") + " st";
+                    double rps = (double)s.TargetFps / Math.Max(1, s.ScrollDivider);
+                    if (rps > 0)
+                    {
+                        double dt = Math.Abs(hit.AgeAt(mouse.X) - hit.AgeAt(h.Origin.X)) / rps;
+                        mtext += "   " + dt.ToString("0.00") + "s";
+                    }
+                    mtext += "   " + FormatHz(ofreq) + " -> " + FormatHz(freq);
+
+                    SizeF ms = g.MeasureString(mtext, font);
+                    float mx2 = Math.Min(Math.Max(Bounds.Left + 4, (h.Origin.X + mouse.X) / 2f - ms.Width / 2),
+                                         Bounds.Right - ms.Width - 6);
+                    float my2 = Math.Min(h.Origin.Y, mouse.Y) - ms.Height - 8;
+                    if (my2 < Bounds.Top + 2) my2 = Math.Max(h.Origin.Y, mouse.Y) + 8;
+                    using (var back = new SolidBrush(Color.FromArgb(225, 24, 20, 8)))
+                        g.FillRectangle(back, mx2 - 5, my2 - 3, ms.Width + 10, ms.Height + 6);
+                    using (var border = new Pen(Color.FromArgb(140, 255, 220, 120)))
+                        g.DrawRectangle(border, mx2 - 5, my2 - 3, ms.Width + 10, ms.Height + 6);
+                    using (var brush = new SolidBrush(Color.FromArgb(245, 255, 232, 170)))
+                        g.DrawString(mtext, font, brush, mx2, my2);
+                }
+            }
+
             return true;
         }
 
