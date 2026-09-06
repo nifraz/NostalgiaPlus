@@ -494,7 +494,22 @@ namespace NostalgiaPlus.Render
         /// </summary>
         public bool DrawHover(Graphics g, HoverInfo h, Settings s, Font font, Font pinFont)
         {
+            return DrawHover(g, h, s, font, pinFont, 1.0);
+        }
+
+        /// <summary>
+        /// The hover overlay, faded with everything else.
+        ///
+        /// It used to draw at fixed opacity while the rest of the furniture faded out,
+        /// so on an idle immersive screen - where the cursor itself is hidden - the
+        /// near-white note pin stayed at full brightness in every axis column with
+        /// nothing around it to explain what it was.
+        /// </summary>
+        public bool DrawHover(Graphics g, HoverInfo h, Settings s, Font font, Font pinFont,
+                              double alpha)
+        {
             if (_map == null || _panes.Length == 0 || h == null || !h.Active) return false;
+            if (alpha <= 0.004) return false;
             Point mouse = h.Cursor;
 
             ChannelPane hit = null;
@@ -513,7 +528,7 @@ namespace NostalgiaPlus.Render
 
             int lineFrom = s.SyncHover ? Bounds.Left : hit.Bounds.Left;
             int lineTo = s.SyncHover ? Bounds.Right : hit.Bounds.Right;
-            using (var pen = new Pen(Color.FromArgb(120, 255, 255, 255)))
+            using (var pen = new Pen(FadeColor(Color.FromArgb(120, 255, 255, 255), alpha)))
             {
                 g.DrawLine(pen, lineFrom, mouse.Y, lineTo, mouse.Y);
                 // Mark the sampled instant, and mirror it into the other pane, which
@@ -531,7 +546,7 @@ namespace NostalgiaPlus.Render
             }
 
             // Mark where the line crosses each pane's curve, so the level is locatable.
-            using (var dot = new SolidBrush(Color.FromArgb(220, 255, 255, 255)))
+            using (var dot = new SolidBrush(FadeColor(Color.FromArgb(220, 255, 255, 255), alpha)))
                 for (int i = 0; i < _panes.Length; i++)
                 {
                     if (!s.SyncHover && !ReferenceEquals(_panes[i], hit)) continue;
@@ -576,12 +591,12 @@ namespace NostalgiaPlus.Render
             float bx = mouse.X + 14;
             float by = mouse.Y - ts.Height - 10;
             if (bx + ts.Width + 10 > Bounds.Right) bx = mouse.X - ts.Width - 16;
-            if (by < Bounds.Top + 2) by = mouse.Y + 12;
-            using (var back = new SolidBrush(Color.FromArgb(220, 10, 10, 12)))
+            if (by < top + 2) by = mouse.Y + 12;
+            using (var back = new SolidBrush(FadeColor(Color.FromArgb(220, 10, 10, 12), alpha)))
                 g.FillRectangle(back, bx - 5, by - 3, ts.Width + 10, ts.Height + 6);
-            using (var border = new Pen(Color.FromArgb(80, 255, 255, 255)))
+            using (var border = new Pen(FadeColor(Color.FromArgb(80, 255, 255, 255), alpha)))
                 g.DrawRectangle(border, bx - 5, by - 3, ts.Width + 10, ts.Height + 6);
-            using (var brush = new SolidBrush(Color.FromArgb(245, 240, 240, 245)))
+            using (var brush = new SolidBrush(FadeColor(Color.FromArgb(245, 240, 240, 245), alpha)))
                 g.DrawString(text, font, brush, bx, by);
 
             // Stamp the frequency onto the axis itself so the eye can stay on the image.
@@ -589,23 +604,29 @@ namespace NostalgiaPlus.Render
             {
                 string pin = note;
                 SizeF ps = g.MeasureString(pin, pinFont);
-                using (var back = new SolidBrush(Color.FromArgb(235, 245, 245, 250)))
-                using (var fg = new SolidBrush(Color.FromArgb(255, 12, 12, 16)))
+                // Centred on the hovered row, but never past the ends of the axis: at
+                // the topmost row the pin was drawn half into the scale strip, where it
+                // sat over the time and level labels as an unexplained pale block.
+                float py = mouse.Y - ps.Height / 2;
+                if (py < top) py = top;
+                if (py + ps.Height > top + hgt) py = top + hgt - ps.Height;
+                using (var back = new SolidBrush(FadeColor(Color.FromArgb(235, 245, 245, 250), alpha)))
+                using (var fg = new SolidBrush(FadeColor(Color.FromArgb(255, 12, 12, 16), alpha)))
                 {
                     if (GutterRect.Width >= 20)
                     {
                         float gx = GutterRect.Left + (GutterRect.Width - ps.Width) / 2;
-                        g.FillRectangle(back, gx - 2, mouse.Y - ps.Height / 2, ps.Width + 4, ps.Height);
-                        g.DrawString(pin, pinFont, fg, gx, mouse.Y - ps.Height / 2);
+                        g.FillRectangle(back, gx - 2, py, ps.Width + 4, ps.Height);
+                        g.DrawString(pin, pinFont, fg, gx, py);
                     }
                     if (OuterLeftRect.Width > 0)
                     {
                         float lx = OuterLeftRect.Left + (OuterLeftRect.Width - ps.Width) / 2;
-                        g.FillRectangle(back, lx - 2, mouse.Y - ps.Height / 2, ps.Width + 4, ps.Height);
-                        g.DrawString(pin, pinFont, fg, lx, mouse.Y - ps.Height / 2);
+                        g.FillRectangle(back, lx - 2, py, ps.Width + 4, ps.Height);
+                        g.DrawString(pin, pinFont, fg, lx, py);
                         float rx = OuterRightRect.Left + (OuterRightRect.Width - ps.Width) / 2;
-                        g.FillRectangle(back, rx - 2, mouse.Y - ps.Height / 2, ps.Width + 4, ps.Height);
-                        g.DrawString(pin, pinFont, fg, rx, mouse.Y - ps.Height / 2);
+                        g.FillRectangle(back, rx - 2, py, ps.Width + 4, ps.Height);
+                        g.DrawString(pin, pinFont, fg, rx, py);
                     }
                 }
             }
@@ -613,8 +634,8 @@ namespace NostalgiaPlus.Render
             // this is the quickest way to tell which.
             if (s.ShowHarmonics)
             {
-                using (var hp = new Pen(Color.FromArgb(70, 160, 210, 255)))
-                using (var hb = new SolidBrush(Color.FromArgb(150, 170, 215, 255)))
+                using (var hp = new Pen(FadeColor(Color.FromArgb(70, 160, 210, 255), alpha)))
+                using (var hb = new SolidBrush(FadeColor(Color.FromArgb(150, 170, 215, 255), alpha)))
                     for (int n = 2; n <= 8; n++)
                     {
                         double hf = freq * n;
@@ -635,7 +656,7 @@ namespace NostalgiaPlus.Render
                 if (obin >= 0 && obin < _map.Width)
                 {
                     double ofreq = _map.Centres[obin];
-                    using (var mp = new Pen(Color.FromArgb(150, 255, 220, 120)))
+                    using (var mp = new Pen(FadeColor(Color.FromArgb(150, 255, 220, 120), alpha)))
                     {
                         g.DrawLine(mp, Bounds.Left, h.Origin.Y, Bounds.Right, h.Origin.Y);
                         g.DrawLine(mp, h.Origin.X, h.Origin.Y, mouse.X, mouse.Y);
@@ -655,12 +676,12 @@ namespace NostalgiaPlus.Render
                     float mx2 = Math.Min(Math.Max(Bounds.Left + 4, (h.Origin.X + mouse.X) / 2f - ms.Width / 2),
                                          Bounds.Right - ms.Width - 6);
                     float my2 = Math.Min(h.Origin.Y, mouse.Y) - ms.Height - 8;
-                    if (my2 < Bounds.Top + 2) my2 = Math.Max(h.Origin.Y, mouse.Y) + 8;
-                    using (var back = new SolidBrush(Color.FromArgb(225, 24, 20, 8)))
+                    if (my2 < top + 2) my2 = Math.Max(h.Origin.Y, mouse.Y) + 8;
+                    using (var back = new SolidBrush(FadeColor(Color.FromArgb(225, 24, 20, 8), alpha)))
                         g.FillRectangle(back, mx2 - 5, my2 - 3, ms.Width + 10, ms.Height + 6);
-                    using (var border = new Pen(Color.FromArgb(140, 255, 220, 120)))
+                    using (var border = new Pen(FadeColor(Color.FromArgb(140, 255, 220, 120), alpha)))
                         g.DrawRectangle(border, mx2 - 5, my2 - 3, ms.Width + 10, ms.Height + 6);
-                    using (var brush = new SolidBrush(Color.FromArgb(245, 255, 232, 170)))
+                    using (var brush = new SolidBrush(FadeColor(Color.FromArgb(245, 255, 232, 170), alpha)))
                         g.DrawString(mtext, font, brush, mx2, my2);
                 }
             }

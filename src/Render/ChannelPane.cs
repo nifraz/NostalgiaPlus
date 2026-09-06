@@ -310,7 +310,15 @@ namespace NostalgiaPlus.Render
             _glowG.DrawImage(_glowSrc, new Rectangle(0, 0, gw, gh),
                              0, 0, gw, gh, GraphicsUnit.Pixel, _glowAttr);
 
-            // 3. plain upscale: one blit, no per-pixel maths
+            // 3. plain upscale: one blit, no per-pixel maths.
+            //
+            // This blit is what bloom now costs: roughly a million alpha-blended
+            // destination pixels at 1080p, about 12ms of a 24ms frame. Premultiplying
+            // the layer and dropping to HighSpeed compositing quality were both tried
+            // and measured no better, because the cost is the blend itself rather than
+            // the filter or the pixel format. Blending fewer pixels is the only lever
+            // left, and there is no general way to know which ones matter - so Glow
+            // stays the first switch to reach for when frames drop.
             var old = g.InterpolationMode;
             g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
             g.DrawImage(_glow, SpectroRect, 0, 0, gw, gh, GraphicsUnit.Pixel);

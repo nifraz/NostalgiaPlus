@@ -449,11 +449,13 @@ namespace NostalgiaPlus.Ui
                 _scope.DrawPaneLabels(g, _fontSmall, furniture, inset);
             }
 
-            if (_settings.ShowHud && _hover.Active && _settings.FsShowOsd)
+            // Gated on the same fade as everything else: once it reaches zero the
+            // cursor is hidden, and a readout for a pointer you cannot see is noise.
+            if (_settings.ShowHud && _hover.Active && _settings.FsShowOsd && furniture > 0.004)
             {
                 lock (_gate)
                 {
-                    _scope.DrawHover(g, _hover, _settings, _fontSmall, _fontTiny);
+                    _scope.DrawHover(g, _hover, _settings, _fontSmall, _fontTiny, furniture);
                 }
             }
             if (_settings.FsShowWaveform && _waveARect.Height > 0) DrawWaveforms(g);
