@@ -36,7 +36,20 @@ namespace NostalgiaPlus.Ui
         // everything out in a row, and uses the band's full height instead of asking
         // for width it will not get.
         private const int MinStack = 150;
+        /// <summary>
+        /// Past this the transport gains nothing: the seek bar is already long enough
+        /// to aim at, and letting it stretch put the clock half a screen from the
+        /// buttons it belongs to and gave the meters bars a metre long.
+        /// </summary>
+        private const int MaxStack = 380;
         private const int Pad = 6;
+
+        /// <summary>
+        /// Height the deck wants. Four stacked rows need this much before the transport
+        /// buttons stop being clickable; below it the rows collapse to about 13px, which
+        /// is smaller than the text they carry.
+        /// </summary>
+        public const int PreferredHeight = 92;
 
         public void Layout(Rectangle gap, Settings s)
         {
@@ -61,16 +74,20 @@ namespace NostalgiaPlus.Ui
             if (need > gap.Width && player) { player = false; need = Need(art, gonio, false, square); }
             if (need > gap.Width) return;
 
-            int slack = gap.Width - need;
             bool stack = player || meters;
-            int x = gap.X + Pad + (stack ? 0 : slack / 2);
+            int slack = gap.Width - need;
+            int stackW = stack ? Math.Min(MaxStack, MinStack + Math.Max(0, slack)) : 0;
+            // Whatever the stack declines to take is spread either side, so the deck
+            // stays centred in the gap rather than hugging its left edge.
+            int used = need - (stack ? MinStack : 0) + stackW;
+            int x = gap.X + Pad + Math.Max(0, (gap.Width - used) / 2);
             int y = gap.Y + Pad;
 
             if (art) { _art = new Rectangle(x, y, square, h); x += square + Pad; }
             if (gonio) { _gonio = new Rectangle(x, y, square, h); x += square + Pad; }
             if (stack)
             {
-                _stack = new Rectangle(x, y, MinStack + slack, h);
+                _stack = new Rectangle(x, y, stackW, h);
                 LayoutStack(player, meters);
             }
         }
@@ -103,7 +120,7 @@ namespace NostalgiaPlus.Ui
                 _prev = new Rectangle(_stack.X, y, btn, btn);
                 _play = new Rectangle(_stack.X + btn + 6, y, btn, btn);
                 _next = new Rectangle(_stack.X + (btn + 6) * 2, y, btn, btn);
-                _clock = new Rectangle(_next.Right + 8, y, _stack.Right - _next.Right - 8, btn);
+                _clock = new Rectangle(_next.Right + 10, y, _stack.Right - _next.Right - 10, btn);
                 y += btn + 4;
                 int seekH = Math.Max(5, Math.Min(9, h / 10));
                 _seek = new Rectangle(_stack.X, y, _stack.Width, seekH);
@@ -263,8 +280,10 @@ namespace NostalgiaPlus.Ui
 
                 string text = Clock(pos) + "  /  " + (dur > 0 ? Clock(dur) : "--:--");
                 SizeF sz = g.MeasureString(text, font);
+                // Left-aligned against the transport: right-aligning it in a wide stack
+                // left the clock stranded a long way from the buttons.
                 if (_clock.Width >= sz.Width)
-                    g.DrawString(text, font, dim, _clock.Right - sz.Width,
+                    g.DrawString(text, font, dim, _clock.X,
                                  _clock.Y + (_clock.Height - sz.Height) / 2);
 
                 g.DrawRectangle(edge, _seek);

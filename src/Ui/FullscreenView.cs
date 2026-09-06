@@ -236,15 +236,22 @@ namespace NostalgiaPlus.Ui
 
                 // One band at the bottom carries both the waveform lanes and the deck,
                 // so turning the lanes off does not take the deck with them.
-                bool wantBand = _settings.FsShowWaveform || _settings.ShowCenterDeck;
                 int waveH = 0;
-                if (wantBand && _settings.WaveHeightPct > 0)
+                if (_settings.FsShowWaveform && _settings.WaveHeightPct > 0)
                     waveH = Math.Max(24, h * Math.Min(40, _settings.WaveHeightPct) / 100);
+
+                // The band is as tall as the taller of the two things in it. The deck
+                // needs real height for its rows to stay usable, and a thin waveform
+                // setting should not shrink it - the lanes keep their own height and
+                // sit at the bottom of the band.
+                int bandH = waveH;
+                if (_settings.ShowCenterDeck)
+                    bandH = Math.Max(bandH, Math.Min(h / 4, CenterDeck.PreferredHeight));
 
                 // The bar sits between the panes and the waveform lanes, in space of its
                 // own: floating it over the spectrogram hid the newest few seconds.
                 Rectangle quickBar;
-                _scopeRect = QuickBar.Reserve(new Rectangle(0, 0, w, Math.Max(16, h - waveH)),
+                _scopeRect = QuickBar.Reserve(new Rectangle(0, 0, w, Math.Max(16, h - bandH)),
                                               _settings, _fontTiny, out quickBar);
                 double sr = _capture != null ? _capture.SampleRate : 48000;
                 _scope.Layout(_scopeRect, _settings, sr);
@@ -258,7 +265,7 @@ namespace NostalgiaPlus.Ui
                     _quick.Layout(quickBar, _fontTiny, _settings.QuickBarCompact);
 
                 ChannelPane[] panes = _scope.Panes;
-                int waveTop = h - waveH;
+                int waveTop = h - waveH;   // lanes sit at the bottom of the band
                 bool lanes = _settings.FsShowWaveform && waveH > 0;
                 _waveARect = lanes && panes.Length > 0
                     ? new Rectangle(panes[0].SpectroRect.X, waveTop, panes[0].SpectroRect.Width, waveH)
@@ -271,18 +278,22 @@ namespace NostalgiaPlus.Ui
                 // strips plus the gutter. With the lanes off it gets a centred slot of
                 // its own instead, so the block does not disappear with them.
                 Rectangle deck = Rectangle.Empty;
-                if (_settings.ShowCenterDeck && waveH > 0)
+                if (_settings.ShowCenterDeck && bandH > 0)
                 {
-                    if (_waveARect.Width > 0 && _waveBRect.Width > 0)
+                    int deckTop = h - bandH;
+                    if (panes.Length > 1)
                     {
-                        int gl = Math.Min(_waveARect.Right, _waveBRect.Right);
-                        int gr = Math.Max(_waveARect.Left, _waveBRect.Left);
-                        if (gr > gl) deck = new Rectangle(gl, waveTop, gr - gl, waveH);
+                        // The gap the lanes leave: the two graph strips plus the gutter.
+                        // Measured from the panes rather than the lanes so it is there
+                        // even when the lanes are switched off.
+                        int gl = Math.Min(panes[0].SpectroRect.Right, panes[1].SpectroRect.Right);
+                        int gr = Math.Max(panes[0].SpectroRect.Left, panes[1].SpectroRect.Left);
+                        if (gr > gl) deck = new Rectangle(gl, deckTop, gr - gl, bandH);
                     }
-                    else
+                    if (deck.Width == 0)
                     {
-                        int dw = Math.Min(900, w - 40);
-                        deck = new Rectangle((w - dw) / 2, waveTop, dw, waveH);
+                        int dw = Math.Min(700, w - 40);
+                        deck = new Rectangle((w - dw) / 2, deckTop, dw, bandH);
                     }
                 }
                 _deck.Layout(deck, _settings);

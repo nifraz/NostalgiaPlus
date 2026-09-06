@@ -276,7 +276,11 @@ namespace NostalgiaPlus.Render
                     g.DrawLine(isMajor ? pen : minorPen, Bounds.Left, y, Bounds.Right, y);
 
                     if (!showLabels) continue;
-                    if (y < labelFloorY) continue;   // keep clear of the top overlay bar
+                    // The overlay bar holds the title on the left and the meters on the
+                    // right; the centre gutter is clear of both, so only the outer
+                    // columns have to keep out of its way. Applying the floor to all
+                    // three cost the top 8% of the axis you read most.
+                    bool outerOk = y >= labelFloorY;
 
                     string primary = labels[i];
                     string secondary = subLabels[i];
@@ -300,7 +304,7 @@ namespace NostalgiaPlus.Render
                                          ly + lineH);
                         }
                     }
-                    if (OuterLeftRect.Width > 0)
+                    if (OuterLeftRect.Width > 0 && outerOk)
                     {
                         g.DrawString(primary, labelFont, ink,
                                      OuterLeftRect.Left + (OuterLeftRect.Width - sz.Width) / 2, ly);
