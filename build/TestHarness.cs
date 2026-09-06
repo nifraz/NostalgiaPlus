@@ -1,4 +1,5 @@
 using System;
+using NostalgiaPlus;
 using NostalgiaPlus.Dsp;
 
 class TestHarness
@@ -15,6 +16,7 @@ class TestHarness
         TestNoteNaming();
         TestDynamicRange();
         TestLoudness();
+        TestUserPresets();
         Console.WriteLine(_fail == 0 ? "\nALL CHECKS PASSED" : "\n" + _fail + " CHECK(S) FAILED");
         Environment.Exit(_fail == 0 ? 0 : 1);
     }
@@ -247,6 +249,57 @@ class TestHarness
         m4.Process(L, R, n);
         Check("right-only signal reads hard right", m4.Balance > 0.98,
               m4.Balance.ToString("0.000"));
+        Console.WriteLine();
+    }
+
+    static void TestUserPresets()
+    {
+        Console.WriteLine("[user preset round trip]");
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                            "NostalgiaPlusTest_" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            var a = new Settings();
+            a.ApplyPreset(Preset.Bass);
+            a.Contrast = 0.71;
+            a.LabelFontSize = 11f;
+            a.MirrorLeftPane = true;
+            a.CurveWidthPct = 33;
+            Check("saves under a name", a.SaveUserPreset(dir, "Round Trip"), "");
+
+            string[] listed = Settings.ListUserPresets(dir);
+            Check("appears in the listing", listed.Length == 1 && listed[0] == "Round Trip",
+                  listed.Length + " found");
+
+            // A fresh instance with deliberately different values, to prove the load
+            // actually overwrites rather than merging.
+            var b = new Settings();
+            b.Contrast = 0.10;
+            b.LabelFontSize = 6f;
+            b.MirrorLeftPane = false;
+            b.CurveWidthPct = 8;
+            Check("loads back", b.LoadUserPreset(dir, "Round Trip"), "");
+
+            Check("numeric value survives", Math.Abs(b.Contrast - 0.71) < 1e-9,
+                  "Contrast " + b.Contrast.ToString("0.000"));
+            Check("float value survives", Math.Abs(b.LabelFontSize - 11f) < 1e-6,
+                  "LabelFontSize " + b.LabelFontSize);
+            Check("bool value survives", b.MirrorLeftPane, "MirrorLeftPane " + b.MirrorLeftPane);
+            Check("int value survives", b.CurveWidthPct == 33, "CurveWidthPct " + b.CurveWidthPct);
+            Check("enum value survives", b.Scale == a.Scale && b.Quality == a.Quality,
+                  b.Scale + " / " + b.Quality);
+            Check("range survives", Math.Abs(b.FMax - 800) < 1e-9, "FMax " + b.FMax);
+
+            Check("names are sanitised", Settings.SanitiseName("bad/name*?") == "badname",
+                  "'" + Settings.SanitiseName("bad/name*?") + "'");
+            Check("deletes", b.DeleteUserPreset(dir, "Round Trip") &&
+                             Settings.ListUserPresets(dir).Length == 0, "");
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
         Console.WriteLine();
     }
 

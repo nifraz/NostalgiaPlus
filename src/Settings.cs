@@ -251,12 +251,97 @@ namespace NostalgiaPlus
             return Path.Combine(storageDir, "NostalgiaPlus.settings");
         }
 
+        // ---- user presets ----
+
+        private static string PresetDir(string storageDir)
+        {
+            return Path.Combine(storageDir, "Presets");
+        }
+
+        /// <summary>Strips anything that cannot appear in a file name.</summary>
+        public static string SanitiseName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return "";
+            var sb = new System.Text.StringBuilder();
+            foreach (char c in name.Trim())
+                if (char.IsLetterOrDigit(c) || c == ' ' || c == '-' || c == '_') sb.Append(c);
+            return sb.ToString().Trim();
+        }
+
+        public static string[] ListUserPresets(string storageDir)
+        {
+            try
+            {
+                string dir = PresetDir(storageDir);
+                if (!Directory.Exists(dir)) return new string[0];
+                string[] files = Directory.GetFiles(dir, "*.settings");
+                var names = new string[files.Length];
+                for (int i = 0; i < files.Length; i++)
+                    names[i] = Path.GetFileNameWithoutExtension(files[i]);
+                Array.Sort(names, StringComparer.OrdinalIgnoreCase);
+                return names;
+            }
+            catch { return new string[0]; }
+        }
+
+        public bool SaveUserPreset(string storageDir, string name)
+        {
+            name = SanitiseName(name);
+            if (name.Length == 0) return false;
+            try
+            {
+                string dir = PresetDir(storageDir);
+                if (!Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                SaveTo(Path.Combine(dir, name + ".settings"));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        /// <summary>
+        /// Copies a stored preset over this instance. Both views hold a reference to the
+        /// same Settings object, so the values are replaced in place rather than the
+        /// object being swapped - otherwise one view would keep the old one.
+        /// </summary>
+        public bool LoadUserPreset(string storageDir, string name)
+        {
+            try
+            {
+                string file = Path.Combine(PresetDir(storageDir), SanitiseName(name) + ".settings");
+                if (!File.Exists(file)) return false;
+                Settings loaded = LoadFile(file);
+                foreach (var f in typeof(Settings).GetFields(
+                             System.Reflection.BindingFlags.Public |
+                             System.Reflection.BindingFlags.Instance))
+                    f.SetValue(this, f.GetValue(loaded));
+                return true;
+            }
+            catch { return false; }
+        }
+
+        public bool DeleteUserPreset(string storageDir, string name)
+        {
+            try
+            {
+                string file = Path.Combine(PresetDir(storageDir), SanitiseName(name) + ".settings");
+                if (!File.Exists(file)) return false;
+                File.Delete(file);
+                return true;
+            }
+            catch { return false; }
+        }
+
         public static Settings Load(string storageDir)
+        {
+            return LoadFile(PathFor(storageDir));
+        }
+
+        /// <summary>Reads any settings file; user presets use the same format.</summary>
+        public static Settings LoadFile(string file)
         {
             var s = new Settings();
             try
             {
-                string file = PathFor(storageDir);
                 if (!File.Exists(file)) return s;
                 var map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (string raw in File.ReadAllLines(file))
@@ -335,6 +420,11 @@ namespace NostalgiaPlus
 
         public void Save(string storageDir)
         {
+            SaveTo(PathFor(storageDir));
+        }
+
+        public void SaveTo(string file)
+        {
             try
             {
                 var sb = new System.Text.StringBuilder();
@@ -400,7 +490,7 @@ namespace NostalgiaPlus
                 sb.AppendLine("FsImmersive=" + FsImmersive);
                 sb.AppendLine("FsGlow=" + FsGlow);
                 sb.AppendLine("FsAutoHide=" + FsAutoHide);
-                File.WriteAllText(PathFor(storageDir), sb.ToString());
+                File.WriteAllText(file, sb.ToString());
             }
             catch { }
         }

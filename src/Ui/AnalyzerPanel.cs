@@ -81,6 +81,8 @@ namespace NostalgiaPlus.Ui
                     {
                         if (DockHeightRequested != null) DockHeightRequested(px);
                     },
+                    StorageDir = _storageDir,
+                    Owner = this,
                     Changed = OnSettingsChanged
                 });
             };

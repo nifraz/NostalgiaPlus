@@ -29,6 +29,10 @@ namespace NostalgiaPlus.Ui
             public Action ToggleImmersive;
             /// <summary>Docked only: resize the host panel now, rather than next launch.</summary>
             public Action<int> SetDockHeight;
+            /// <summary>Where user presets live; null disables them.</summary>
+            public string StorageDir;
+            /// <summary>Owner for the name prompt.</summary>
+            public IWin32Window Owner;
             /// <summary>Called after any change; the flag asks for a geometry rebuild.</summary>
             public Action<bool> Changed;
         }
@@ -96,6 +100,58 @@ namespace NostalgiaPlus.Ui
                 mi.Click += delegate { s.ApplyPreset(captured); o.Changed(true); };
                 m.DropDownItems.Add(mi);
             }
+
+            if (o.StorageDir == null) return m;
+
+            // Any adjustment turns the preset into Custom, so without somewhere to put it
+            // a configuration you actually liked is unrecoverable.
+            string[] saved = Settings.ListUserPresets(o.StorageDir);
+            if (saved.Length > 0)
+            {
+                m.DropDownItems.Add(new ToolStripSeparator());
+                foreach (string name in saved)
+                {
+                    string captured = name;
+                    var mi = new ToolStripMenuItem(name);
+                    mi.Click += delegate
+                    {
+                        if (s.LoadUserPreset(o.StorageDir, captured)) o.Changed(true);
+                    };
+                    m.DropDownItems.Add(mi);
+                }
+            }
+
+            m.DropDownItems.Add(new ToolStripSeparator());
+
+            var save = new ToolStripMenuItem("Save current as...");
+            save.Click += delegate
+            {
+                string name = NameDialog.Ask(o.Owner, "Save preset",
+                                             "Name for these settings:", "My preset");
+                if (name == null) return;
+                if (s.SaveUserPreset(o.StorageDir, name)) o.Changed(false);
+            };
+            m.DropDownItems.Add(save);
+
+            if (saved.Length > 0)
+            {
+                var del = new ToolStripMenuItem("Delete saved preset");
+                foreach (string name in saved)
+                {
+                    string captured = name;
+                    var mi = new ToolStripMenuItem(name);
+                    mi.Click += delegate
+                    {
+                        if (MessageBox.Show("Delete preset \"" + captured + "\"?", "Nostalgia+",
+                                            MessageBoxButtons.YesNo, MessageBoxIcon.Question)
+                            == DialogResult.Yes && s.DeleteUserPreset(o.StorageDir, captured))
+                            o.Changed(false);
+                    };
+                    del.DropDownItems.Add(mi);
+                }
+                m.DropDownItems.Add(del);
+            }
+
             return m;
         }
 

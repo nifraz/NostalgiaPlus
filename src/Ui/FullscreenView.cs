@@ -103,6 +103,8 @@ namespace NostalgiaPlus.Ui
                     ToggleFreeze = delegate { _frozen = !_frozen; Invalidate(); },
                     ToggleFullscreen = delegate { Close(); },
                     ToggleImmersive = ToggleImmersive,
+                    StorageDir = _storageDir,
+                    Owner = this,
                     Changed = OnSettingsChanged
                 });
             };
