@@ -326,15 +326,18 @@ namespace NostalgiaPlus.Render
                     SizeF sz = g.MeasureString(primary, labelFont);
                     float lineH = sz.Height - 2;
 
-                    // Centred on the row it names. The old placement was a hardcoded
-                    // 13px above the line - roughly one line height, so a label pointed
-                    // at a row it was not naming, which on a note axis is a couple of
-                    // semitones out. Clamped so the end labels stay inside the axis and
-                    // clear of the unit caption when that sits on the axis itself.
+                    // Centred on the row it names, or not drawn at all.
+                    //
+                    // The previous version clamped instead, which kept the end labels on
+                    // screen at the cost of the one thing an axis has to get right: the
+                    // topmost label was pushed down by half a line, so the gap between
+                    // it and the next was visibly shorter than every other gap. A row
+                    // too close to either end to carry a centred label now keeps its
+                    // gridline and loses its number, and every number that is drawn sits
+                    // exactly on its row - so the spacing is equal all the way down.
                     float blockH = secondary != null ? lineH + sz.Height : sz.Height;
                     float ly = y - blockH / 2f;
-                    if (ly < top + unitFloor) ly = top + unitFloor;
-                    if (ly + blockH > top + h) ly = top + h - blockH;
+                    if (ly < top + unitFloor || ly + blockH > top + h) continue;
 
                     // A tick on the edge of each column that faces the image, so the
                     // column reads as a ruler against the picture.
@@ -466,7 +469,8 @@ namespace NostalgiaPlus.Render
                                           List<string> labels, List<string> subLabels,
                                           AxisLabelMode mode, List<bool> major, int axisPixels)
         {
-            const double TargetSpacing = 30.0;
+            // Two-line labels need room for two lines, or consecutive ones touch.
+            double TargetSpacing = mode == AxisLabelMode.Both ? 46.0 : 30.0;
 
             if (map.Scale == FreqScale.Linear)
             {
