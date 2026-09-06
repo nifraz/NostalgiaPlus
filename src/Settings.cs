@@ -18,6 +18,9 @@ namespace NostalgiaPlus
     /// <summary>What the frequency axis prints at each gridline.</summary>
     public enum AxisLabelMode { Notes, Frequency, Both }
 
+    /// <summary>Which end of the panes the reserved scale strip sits at.</summary>
+    public enum ScaleLanePosition { Top, Bottom }
+
     /// <summary>Returns {title, artist, album}; any element may be null or empty.</summary>
     public delegate string[] NowPlayingProvider();
 
@@ -34,14 +37,11 @@ namespace NostalgiaPlus
         public double FMax = 20000.0;
         public AnalysisQuality Quality = AnalysisQuality.Balanced;
         public WindowType Window = WindowType.Hann;
-        public ChannelMode Channel = ChannelMode.Mid;
         public BandAggregate Aggregate = BandAggregate.Peak;
         public double TiltDbPerOctave = 3.0;
         public bool AdaptiveRange = true;
         public double FloorDb = -95.0;
         public double CeilingDb = -5.0;
-        public bool ShowCurve = true;
-        public double CurveRatio = 0.32;
         // Anything prefixed Fs is genuinely fullscreen-only. Everything else is shared
         // by both views, so a change in one is visible in the other.
         public bool ShowGrid = true;
@@ -52,8 +52,10 @@ namespace NostalgiaPlus
         public int TargetFps = 60;
         public double AttackMs = 20.0;
         public double ReleaseMs = 320.0;
-        public bool PeakHold = true;
+        /// <summary>How fast the held maximum trace gives up its reading.</summary>
         public double PeakDecayDbPerSec = 14.0;
+        /// <summary>Seconds for the average trace to follow a step change.</summary>
+        public double AverageSeconds = 1.2;
         public bool UseLoopback = true;
         public int ScrollDivider = 1;
 
@@ -96,6 +98,34 @@ namespace NostalgiaPlus
         public bool ShowHarmonics = false;
         /// <summary>Master switch for all fullscreen on-screen display.</summary>
         public bool FsShowOsd = true;
+
+        // --- quick action bar (both views) ---
+        /// <summary>Row of one-click cycling buttons along the bottom of the view.</summary>
+        public bool ShowQuickButtons = true;
+        /// <summary>Value-only buttons on one line, for short panels.</summary>
+        public bool QuickBarCompact = false;
+
+        // --- reserved scale strip ---
+        /// <summary>
+        /// Give the time and dB scales a strip of their own instead of printing them on
+        /// chips over the image. Costs a little height and makes both scales legible
+        /// against dense material, which the chips never quite managed.
+        /// </summary>
+        public bool ReserveScaleSpace = true;
+        public ScaleLanePosition ScaleLanePos = ScaleLanePosition.Top;
+
+        // --- centre deck (fullscreen) ---
+        /// <summary>
+        /// The block filling the gap between the two waveform lanes. Everything in it
+        /// describes both channels at once, which is why it belongs to neither pane.
+        /// </summary>
+        public bool ShowCenterDeck = true;
+        public bool DeckShowGoniometer = true;
+        public bool DeckShowMeters = true;
+        public bool DeckShowTransport = true;
+        public bool DeckShowArtwork = true;
+        /// <summary>Split the quick bar around the centre gutter so the axis runs unbroken.</summary>
+        public bool QuickBarSplit = true;
         public int BarSize = 6;
         public int LedSegment = 5;
         /// <summary>
@@ -120,6 +150,23 @@ namespace NostalgiaPlus
         public bool FsGlow = true;
         public bool FsAutoHide = true;
 
+        /// <summary>
+        /// Height of the reserved scale strip, in pixels. Derived from the text size
+        /// rather than stored, so changing the font never leaves the strip too small
+        /// for its own labels: points to pixels at 96 dpi is x1.333, plus line spacing
+        /// and a little padding above and below.
+        /// </summary>
+        public int ScaleLaneHeight
+        {
+            get
+            {
+                if (!ReserveScaleSpace) return 0;
+                float f = LabelFontSize;
+                if (f < 5f) f = 5f; else if (f > 20f) f = 20f;
+                return (int)(f * 1.9f) + 7;
+            }
+        }
+
         public void ApplyPreset(Preset p)
         {
             Preset = p;
@@ -134,7 +181,6 @@ namespace NostalgiaPlus
                     TiltDbPerOctave = 0.0;
                     Aggregate = BandAggregate.Peak;
                     AdaptiveRange = true;
-                    ShowCurve = true;
                     FsImmersive = false;
                     break;
 
@@ -149,7 +195,6 @@ namespace NostalgiaPlus
                     Aggregate = BandAggregate.Energy;
                     AdaptiveRange = false;
                     FloorDb = -110; CeilingDb = 0;
-                    ShowCurve = true;
                     FsImmersive = false;
                     break;
 
@@ -166,7 +211,6 @@ namespace NostalgiaPlus
                     AdaptiveRange = true;
                     Contrast = 0.55;
                     ScrollDivider = 2;
-                    ShowCurve = true;
                     FsImmersive = true;
                     FsGlow = true;
                     FsAutoHide = true;
@@ -238,7 +282,6 @@ namespace NostalgiaPlus
                     TiltDbPerOctave = 3.0;
                     Aggregate = BandAggregate.Peak;
                     AdaptiveRange = true;
-                    ShowCurve = true;
                     FsImmersive = false;
                     break;
             }
@@ -357,25 +400,22 @@ namespace NostalgiaPlus
                 s.Scale = ParseEnum(map, "Scale", s.Scale);
                 s.Quality = ParseEnum(map, "Quality", s.Quality);
                 s.Window = ParseEnum(map, "Window", s.Window);
-                s.Channel = ParseEnum(map, "Channel", s.Channel);
                 s.Aggregate = ParseEnum(map, "Aggregate", s.Aggregate);
                 s.FMin = ParseDouble(map, "FMin", s.FMin);
                 s.FMax = ParseDouble(map, "FMax", s.FMax);
                 s.TiltDbPerOctave = ParseDouble(map, "Tilt", s.TiltDbPerOctave);
                 s.FloorDb = ParseDouble(map, "FloorDb", s.FloorDb);
                 s.CeilingDb = ParseDouble(map, "CeilingDb", s.CeilingDb);
-                s.CurveRatio = ParseDouble(map, "CurveRatio", s.CurveRatio);
                 s.AttackMs = ParseDouble(map, "AttackMs", s.AttackMs);
                 s.ReleaseMs = ParseDouble(map, "ReleaseMs", s.ReleaseMs);
                 s.PeakDecayDbPerSec = ParseDouble(map, "PeakDecay", s.PeakDecayDbPerSec);
+                s.AverageSeconds = ParseDouble(map, "AverageSeconds", s.AverageSeconds);
                 s.AdaptiveRange = ParseBool(map, "AdaptiveRange", s.AdaptiveRange);
-                s.ShowCurve = ParseBool(map, "ShowCurve", s.ShowCurve);
                 s.ShowGrid = ParseBool(map, "ShowGrid", s.ShowGrid);
                 s.ShowLabels = ParseBool(map, "ShowLabels", s.ShowLabels);
                 s.ShowColorBar = ParseBool(map, "ShowColorBar", s.ShowColorBar);
                 s.ShowHud = ParseBool(map, "ShowHud", s.ShowHud);
                 s.ShowStatus = ParseBool(map, "ShowStatus", s.ShowStatus);
-                s.PeakHold = ParseBool(map, "PeakHold", s.PeakHold);
                 s.UseLoopback = ParseBool(map, "UseLoopback", s.UseLoopback);
                 s.TargetFps = (int)ParseDouble(map, "TargetFps", s.TargetFps);
                 s.ScrollDivider = (int)ParseDouble(map, "ScrollDivider", s.ScrollDivider);
@@ -408,6 +448,16 @@ namespace NostalgiaPlus
                 s.DockPanelHeight = (int)ParseDouble(map, "DockPanelHeight", s.DockPanelHeight);
                 s.Contrast = ParseDouble(map, "Contrast", s.Contrast);
                 s.GutterWidth = (int)ParseDouble(map, "GutterWidth", s.GutterWidth);
+                s.ShowQuickButtons = ParseBool(map, "ShowQuickButtons", s.ShowQuickButtons);
+                s.QuickBarCompact = ParseBool(map, "QuickBarCompact", s.QuickBarCompact);
+                s.ReserveScaleSpace = ParseBool(map, "ReserveScaleSpace", s.ReserveScaleSpace);
+                s.ScaleLanePos = ParseEnum(map, "ScaleLanePos", s.ScaleLanePos);
+                s.ShowCenterDeck = ParseBool(map, "ShowCenterDeck", s.ShowCenterDeck);
+                s.DeckShowGoniometer = ParseBool(map, "DeckShowGoniometer", s.DeckShowGoniometer);
+                s.DeckShowMeters = ParseBool(map, "DeckShowMeters", s.DeckShowMeters);
+                s.DeckShowTransport = ParseBool(map, "DeckShowTransport", s.DeckShowTransport);
+                s.DeckShowArtwork = ParseBool(map, "DeckShowArtwork", s.DeckShowArtwork);
+                s.QuickBarSplit = ParseBool(map, "QuickBarSplit", s.QuickBarSplit);
                 s.FsShowWaveform = ParseBool(map, "FsShowWaveform", s.FsShowWaveform);
                 s.FsShowOverlays = ParseBool(map, "FsShowOverlays", s.FsShowOverlays);
                 s.FsImmersive = ParseBool(map, "FsImmersive", s.FsImmersive);
@@ -434,25 +484,22 @@ namespace NostalgiaPlus
                 sb.AppendLine("Scale=" + Scale);
                 sb.AppendLine("Quality=" + Quality);
                 sb.AppendLine("Window=" + Window);
-                sb.AppendLine("Channel=" + Channel);
                 sb.AppendLine("Aggregate=" + Aggregate);
                 sb.AppendLine("FMin=" + Inv(FMin));
                 sb.AppendLine("FMax=" + Inv(FMax));
                 sb.AppendLine("Tilt=" + Inv(TiltDbPerOctave));
                 sb.AppendLine("FloorDb=" + Inv(FloorDb));
                 sb.AppendLine("CeilingDb=" + Inv(CeilingDb));
-                sb.AppendLine("CurveRatio=" + Inv(CurveRatio));
                 sb.AppendLine("AttackMs=" + Inv(AttackMs));
                 sb.AppendLine("ReleaseMs=" + Inv(ReleaseMs));
                 sb.AppendLine("PeakDecay=" + Inv(PeakDecayDbPerSec));
+                sb.AppendLine("AverageSeconds=" + Inv(AverageSeconds));
                 sb.AppendLine("AdaptiveRange=" + AdaptiveRange);
-                sb.AppendLine("ShowCurve=" + ShowCurve);
                 sb.AppendLine("ShowGrid=" + ShowGrid);
                 sb.AppendLine("ShowLabels=" + ShowLabels);
                 sb.AppendLine("ShowColorBar=" + ShowColorBar);
                 sb.AppendLine("ShowHud=" + ShowHud);
                 sb.AppendLine("ShowStatus=" + ShowStatus);
-                sb.AppendLine("PeakHold=" + PeakHold);
                 sb.AppendLine("UseLoopback=" + UseLoopback);
                 sb.AppendLine("TargetFps=" + TargetFps);
                 sb.AppendLine("ScrollDivider=" + ScrollDivider);
@@ -485,6 +532,16 @@ namespace NostalgiaPlus
                 sb.AppendLine("DockPanelHeight=" + DockPanelHeight);
                 sb.AppendLine("Contrast=" + Inv(Contrast));
                 sb.AppendLine("GutterWidth=" + GutterWidth);
+                sb.AppendLine("ShowQuickButtons=" + ShowQuickButtons);
+                sb.AppendLine("QuickBarCompact=" + QuickBarCompact);
+                sb.AppendLine("ReserveScaleSpace=" + ReserveScaleSpace);
+                sb.AppendLine("ScaleLanePos=" + ScaleLanePos);
+                sb.AppendLine("ShowCenterDeck=" + ShowCenterDeck);
+                sb.AppendLine("DeckShowGoniometer=" + DeckShowGoniometer);
+                sb.AppendLine("DeckShowMeters=" + DeckShowMeters);
+                sb.AppendLine("DeckShowTransport=" + DeckShowTransport);
+                sb.AppendLine("DeckShowArtwork=" + DeckShowArtwork);
+                sb.AppendLine("QuickBarSplit=" + QuickBarSplit);
                 sb.AppendLine("FsShowWaveform=" + FsShowWaveform);
                 sb.AppendLine("FsShowOverlays=" + FsShowOverlays);
                 sb.AppendLine("FsImmersive=" + FsImmersive);

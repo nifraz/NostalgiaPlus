@@ -39,6 +39,26 @@ namespace NostalgiaPlus.Render
         public Rectangle OuterLeftRect { get; private set; }
         public Rectangle OuterRightRect { get; private set; }
         public const int AxisMargin = 30;
+        /// <summary>Height of the reserved scale strip, 0 when the scales are overlaid.</summary>
+        public int LaneHeight { get { return _panes.Length == 0 ? 0 : _panes[0].LaneRect.Height; } }
+        /// <summary>True when that strip is above the image rather than below it.</summary>
+        public bool LaneAtTop
+        {
+            get { return _panes.Length > 0 && _panes[0].LaneRect.Height > 0
+                         && _panes[0].LaneRect.Top <= _panes[0].Bounds.Top; }
+        }
+        /// <summary>
+        /// Where chrome drawn over the image has to start so it does not land on the
+        /// scale strip: the strip's height when it is at the top, otherwise zero.
+        /// </summary>
+        public int ChromeTop { get { return LaneAtTop ? LaneHeight : 0; } }
+        /// <summary>
+        /// True when the last <see cref="Analyse"/> call appended a spectrogram column.
+        /// Anything else that scrolls alongside the spectrograms - the waveform lanes -
+        /// has to advance on this and nothing else, or it covers a different span of
+        /// time at every scroll speed but 1/1.
+        /// </summary>
+        public bool PushedColumn { get; private set; }
         public double FloorDb { get; private set; }
         public double CeilingDb { get; private set; }
         public FrequencyMap Map { get { return _map; } }
@@ -68,6 +88,8 @@ namespace NostalgiaPlus.Render
                                    Math.Max(16, bounds.Width - 2 * margin), bounds.Height);
             int paneCount = SpectrumAnalyzer.PaneCount(s.PairMode);
             int gutter = paneCount == 2 ? Math.Max(0, Math.Min(90, s.GutterWidth)) : 0;
+            int laneH = s.ScaleLaneHeight;
+            bool laneTop = s.ScaleLanePos == ScaleLanePosition.Top;
 
             if (_panes.Length != paneCount)
             {
@@ -86,21 +108,24 @@ namespace NostalgiaPlus.Render
             // the centre, so history flows outward from the middle.
             bool leftOnLeft = (paneCount == 2 && s.MirrorLeftPane) ? !s.CurveOnLeft : s.CurveOnLeft;
 
+            // Both the centre gutter and the outer strips carry the frequency axis, so
+            // they span the panes' image area rather than the whole control - otherwise
+            // a note label could land beside the scale strip instead of beside its row.
             if (paneCount == 2)
             {
                 _panes[0].Layout(new Rectangle(bounds.X, bounds.Y, paneW, bounds.Height),
-                                 curveWidth, leftOnLeft, _lut);
+                                 curveWidth, leftOnLeft, _lut, laneH, laneTop);
                 GutterRect = new Rectangle(bounds.X + paneW, bounds.Y, gutter, bounds.Height);
                 _panes[1].Layout(new Rectangle(bounds.X + paneW + gutter, bounds.Y,
                                                Math.Max(8, bounds.Right - (bounds.X + paneW + gutter)),
                                                bounds.Height),
-                                 curveWidth, s.CurveOnLeft, _lut);
+                                 curveWidth, s.CurveOnLeft, _lut, laneH, laneTop);
                 _panes[0].Label = labels[0];
                 _panes[1].Label = labels[1];
             }
             else
             {
-                _panes[0].Layout(bounds, curveWidth, s.CurveOnLeft, _lut);
+                _panes[0].Layout(bounds, curveWidth, s.CurveOnLeft, _lut, laneH, laneTop);
                 _panes[0].Label = labels[0];
                 GutterRect = Rectangle.Empty;
             }
@@ -114,6 +139,7 @@ namespace NostalgiaPlus.Render
         /// <summary>Runs one analysis frame. Returns false if there is not enough audio yet.</summary>
         public bool Analyse(LoopbackCapture cap, Settings s, double dt, bool frozen)
         {
+            PushedColumn = false;
             if (cap == null || _map == null || _panes.Length == 0) return false;
             _analyzer.Configure(cap.SampleRate, s.Quality, s.Window);
 
@@ -126,8 +152,11 @@ namespace NostalgiaPlus.Render
                                          s.Aggregate, s.TiltDbPerOctave, s.PairMode))
                 return false;
 
-            a.Update(dt, s.Interp, s.Filter, s.AttackMs, s.ReleaseMs);
-            if (!ReferenceEquals(a, b)) b.Update(dt, s.Interp, s.Filter, s.AttackMs, s.ReleaseMs);
+            a.Update(dt, s.Interp, s.Filter, s.AttackMs, s.ReleaseMs,
+                     s.PeakDecayDbPerSec, s.AverageSeconds);
+            if (!ReferenceEquals(a, b))
+                b.Update(dt, s.Interp, s.Filter, s.AttackMs, s.ReleaseMs,
+                         s.PeakDecayDbPerSec, s.AverageSeconds);
 
             if (s.AdaptiveRange)
             {
@@ -155,6 +184,7 @@ namespace NostalgiaPlus.Render
             if (push)
                 for (int i = 0; i < _panes.Length; i++)
                     _panes[i].PushColumn(FloorDb, CeilingDb, _lut);
+            PushedColumn = push;
 
             return true;
         }
@@ -172,6 +202,7 @@ namespace NostalgiaPlus.Render
 
             for (int i = 0; i < _panes.Length; i++)
             {
+                _panes[i].DrawScaleLane(g, alpha);
                 _panes[i].DrawSpectrogram(g, _lut, glow);
                 if (s.ShowTimeMarks && alpha > 0.004)
                     _panes[i].DrawTimeMarks(g, labelFont, rowsPerSecond, alpha, topInset);
@@ -192,7 +223,7 @@ namespace NostalgiaPlus.Render
             bool showLabels = s.ShowAxisLabels;
 
             int h = _panes[0].SpectroRect.Height;
-            int top = Bounds.Y;
+            int top = _panes[0].SpectroRect.Top;
 
             if (GutterRect.Width > 0)
                 using (var bg = new SolidBrush(FadeColor(Color.FromArgb(255, 12, 12, 15), alpha)))
@@ -235,34 +266,37 @@ namespace NostalgiaPlus.Render
                     SolidBrush ink = isMajor ? brush : minorBrush;
                     SizeF sz = g.MeasureString(primary, labelFont);
                     float lineH = sz.Height - 2;
+                    // Keep the text beside its own row rather than letting the topmost
+                    // one ride up into the scale strip.
+                    float ly = Math.Max(top, y - 13);
 
                     if (GutterRect.Width >= 22)
                     {
                         g.DrawString(primary, labelFont, ink,
-                                     GutterRect.Left + (GutterRect.Width - sz.Width) / 2, y - 13);
+                                     GutterRect.Left + (GutterRect.Width - sz.Width) / 2, ly);
                         if (secondary != null)
                         {
                             SizeF s2 = g.MeasureString(secondary, labelFont);
                             g.DrawString(secondary, labelFont, ink,
                                          GutterRect.Left + (GutterRect.Width - s2.Width) / 2,
-                                         y - 13 + lineH);
+                                         ly + lineH);
                         }
                     }
                     if (OuterLeftRect.Width > 0)
                     {
                         g.DrawString(primary, labelFont, ink,
-                                     OuterLeftRect.Left + (OuterLeftRect.Width - sz.Width) / 2, y - 13);
+                                     OuterLeftRect.Left + (OuterLeftRect.Width - sz.Width) / 2, ly);
                         g.DrawString(primary, labelFont, ink,
-                                     OuterRightRect.Left + (OuterRightRect.Width - sz.Width) / 2, y - 13);
+                                     OuterRightRect.Left + (OuterRightRect.Width - sz.Width) / 2, ly);
                         if (secondary != null)
                         {
                             SizeF s2 = g.MeasureString(secondary, labelFont);
                             g.DrawString(secondary, labelFont, ink,
                                          OuterLeftRect.Left + (OuterLeftRect.Width - s2.Width) / 2,
-                                         y - 13 + lineH);
+                                         ly + lineH);
                             g.DrawString(secondary, labelFont, ink,
                                          OuterRightRect.Left + (OuterRightRect.Width - s2.Width) / 2,
-                                         y - 13 + lineH);
+                                         ly + lineH);
                         }
                     }
                 }

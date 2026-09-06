@@ -66,6 +66,12 @@ namespace NostalgiaPlus.Render
         public Rectangle Bounds { get; private set; }
         public Rectangle CurveRect { get; private set; }
         public Rectangle SpectroRect { get; private set; }
+        /// <summary>
+        /// Strip reserved for the time and dB scales, empty when they are drawn over
+        /// the image instead. Carved off this pane's own bounds, so the spectrogram and
+        /// the curve both shrink by it and nothing is ever printed on top of data.
+        /// </summary>
+        public Rectangle LaneRect { get; private set; }
         public bool CurveOnLeft { get; private set; }
         public string Label = "";
 
@@ -78,6 +84,16 @@ namespace NostalgiaPlus.Render
 
         public void Layout(Rectangle bounds, int curveWidth, bool curveOnLeft, int[] lut)
         {
+            Layout(bounds, curveWidth, curveOnLeft, lut, 0, true);
+        }
+
+        /// <summary>
+        /// Lays the pane out, optionally carving <paramref name="laneHeight"/> pixels off
+        /// one end for the reserved scale strip.
+        /// </summary>
+        public void Layout(Rectangle bounds, int curveWidth, bool curveOnLeft, int[] lut,
+                           int laneHeight, bool laneAtTop)
+        {
             if (bounds.Width < 8) bounds.Width = 8;
             if (bounds.Height < 8) bounds.Height = 8;
             if (curveWidth < 0) curveWidth = 0;
@@ -86,16 +102,33 @@ namespace NostalgiaPlus.Render
             Bounds = bounds;
             CurveOnLeft = curveOnLeft;
 
-            int specW = Math.Max(1, bounds.Width - curveWidth);
+            // Never let the strip eat the image: on a short docked panel the scales are
+            // worth less than the pixels they would cost.
+            if (laneHeight < 0) laneHeight = 0;
+            if (laneHeight > bounds.Height / 4) laneHeight = 0;
+
+            Rectangle body = bounds;
+            if (laneHeight > 0)
+            {
+                LaneRect = laneAtTop
+                    ? new Rectangle(bounds.X, bounds.Y, bounds.Width, laneHeight)
+                    : new Rectangle(bounds.X, bounds.Bottom - laneHeight, bounds.Width, laneHeight);
+                body = laneAtTop
+                    ? new Rectangle(bounds.X, bounds.Y + laneHeight, bounds.Width, bounds.Height - laneHeight)
+                    : new Rectangle(bounds.X, bounds.Y, bounds.Width, bounds.Height - laneHeight);
+            }
+            else LaneRect = Rectangle.Empty;
+
+            int specW = Math.Max(1, body.Width - curveWidth);
             if (curveOnLeft)
             {
-                CurveRect = new Rectangle(bounds.X, bounds.Y, curveWidth, bounds.Height);
-                SpectroRect = new Rectangle(bounds.X + curveWidth, bounds.Y, specW, bounds.Height);
+                CurveRect = new Rectangle(body.X, body.Y, curveWidth, body.Height);
+                SpectroRect = new Rectangle(body.X + curveWidth, body.Y, specW, body.Height);
             }
             else
             {
-                SpectroRect = new Rectangle(bounds.X, bounds.Y, specW, bounds.Height);
-                CurveRect = new Rectangle(bounds.X + specW, bounds.Y, curveWidth, bounds.Height);
+                SpectroRect = new Rectangle(body.X, body.Y, specW, body.Height);
+                CurveRect = new Rectangle(body.X + specW, body.Y, curveWidth, body.Height);
             }
 
             if (_sg == null) _sg = new ColumnSpectrogram(SpectroRect.Width, SpectroRect.Height);
@@ -144,6 +177,16 @@ namespace NostalgiaPlus.Render
         public void Update(double dt, CurveInterpolation interp, FilteringAmount filter,
                            double attackMs, double releaseMs)
         {
+            Update(dt, interp, filter, attackMs, releaseMs,
+                   _ext.HoldDecayDbPerSecond, _ext.AverageSeconds);
+        }
+
+        public void Update(double dt, CurveInterpolation interp, FilteringAmount filter,
+                           double attackMs, double releaseMs,
+                           double holdDecayDbPerSec, double averageSeconds)
+        {
+            _ext.HoldDecayDbPerSecond = holdDecayDbPerSec;
+            _ext.AverageSeconds = averageSeconds;
             int n = _raw.Length;
             if (n == 0) return;
 
@@ -316,6 +359,40 @@ namespace NostalgiaPlus.Render
             g.SmoothingMode = old;
         }
 
+        /// <summary>
+        /// Paints the reserved scale strip's ground. Drawn before the scales themselves
+        /// so their labels sit on a flat surface rather than on the spectrogram.
+        /// </summary>
+        public void DrawScaleLane(Graphics g, double alpha)
+        {
+            if (LaneRect.Height <= 0 || alpha <= 0.004) return;
+            using (var bg = new SolidBrush(Color.FromArgb((int)(255 * alpha), 13, 13, 16)))
+                g.FillRectangle(bg, LaneRect);
+            // Hairline on the edge facing the image, so the strip reads as a ruler
+            // against the picture rather than as a gap in it.
+            int edge = LaneAtTop ? LaneRect.Bottom - 1 : LaneRect.Top;
+            using (var line = new Pen(Color.FromArgb((int)(60 * alpha), 255, 255, 255)))
+                g.DrawLine(line, LaneRect.Left, edge, LaneRect.Right - 1, edge);
+        }
+
+        private bool LaneAtTop { get { return LaneRect.Top <= Bounds.Top; } }
+
+        /// <summary>Vertical extent of a tick drawn inside the scale strip.</summary>
+        private void LaneTick(out int y0, out int y1)
+        {
+            int len = Math.Max(3, LaneRect.Height / 4);
+            if (LaneAtTop) { y0 = LaneRect.Bottom - 1 - len; y1 = LaneRect.Bottom - 1; }
+            else { y0 = LaneRect.Top; y1 = LaneRect.Top + len; }
+        }
+
+        private float LaneTextY(SizeF sz)
+        {
+            int len = Math.Max(3, LaneRect.Height / 4);
+            float free = LaneRect.Height - len;
+            return LaneAtTop ? LaneRect.Top + (free - sz.Height) / 2f
+                             : LaneRect.Top + len + (free - sz.Height) / 2f;
+        }
+
         /// <summary>dB step chosen so the strip carries roughly four to six lines.</summary>
         private static double DbStep(double span)
         {
@@ -343,7 +420,8 @@ namespace NostalgiaPlus.Render
             if (o.Background == GraphBackground.Plain) return;
 
             double step = DbStep(span);
-            bool labels = o.ShowDbScale && o.LabelFont != null && CurveRect.Width >= 58;
+            bool labels = o.ShowDbScale && o.LabelFont != null &&
+                          CurveRect.Width >= (LaneRect.Height > 0 ? 34 : 58);
 
             using (var pen = new Pen(Color.FromArgb((int)(34 * o.Alpha), 255, 255, 255)))
             using (var brush = new SolidBrush(Color.FromArgb((int)(215 * o.Alpha), 235, 235, 242)))
@@ -355,17 +433,32 @@ namespace NostalgiaPlus.Render
                     g.DrawLine(pen, x, CurveRect.Top, x, CurveRect.Bottom);
                     if (labels)
                     {
-                        // The high-frequency end is the quiet end of most material, so
-                        // the scale sits there rather than competing with the bass.
                         string t = d.ToString("0");
                         SizeF sz = g.MeasureString(t, o.LabelFont);
                         float lx = x - sz.Width / 2;
                         if (lx < CurveRect.Left) lx = CurveRect.Left;
                         if (lx + sz.Width > CurveRect.Right) lx = CurveRect.Right - sz.Width;
-                        float ly = CurveRect.Top + 3 + o.TopInset;
-                        using (var chip = new SolidBrush(Color.FromArgb((int)(170 * o.Alpha), 8, 8, 11)))
-                            g.FillRectangle(chip, lx - 2, ly - 1, sz.Width + 4, sz.Height + 1);
-                        g.DrawString(t, o.LabelFont, brush, lx, ly);
+
+                        if (LaneRect.Height > 0)
+                        {
+                            // The strip is the scale's own space: no chip behind the
+                            // text, and nothing of the graph hidden by it.
+                            int t0, t1;
+                            LaneTick(out t0, out t1);
+                            using (var tick = new Pen(Color.FromArgb((int)(110 * o.Alpha), 255, 255, 255)))
+                                g.DrawLine(tick, x, t0, x, t1);
+                            g.DrawString(t, o.LabelFont, brush, lx, LaneTextY(sz));
+                        }
+                        else
+                        {
+                            // Overlaid: the high-frequency end is the quiet end of most
+                            // material, so the scale sits there rather than competing
+                            // with the bass.
+                            float ly = CurveRect.Top + 3 + o.TopInset;
+                            using (var chip = new SolidBrush(Color.FromArgb((int)(170 * o.Alpha), 8, 8, 11)))
+                                g.FillRectangle(chip, lx - 2, ly - 1, sz.Width + 4, sz.Height + 1);
+                            g.DrawString(t, o.LabelFont, brush, lx, ly);
+                        }
                     }
                 }
 
@@ -400,6 +493,7 @@ namespace NostalgiaPlus.Render
             using (var pen = new Pen(Color.FromArgb((int)(30 * alpha), 255, 255, 255)))
             using (var brush = new SolidBrush(Color.FromArgb((int)(215 * alpha), 235, 235, 242)))
             using (var chip = new SolidBrush(Color.FromArgb((int)(170 * alpha), 8, 8, 11)))
+            using (var tickPen = new Pen(Color.FromArgb((int)(110 * alpha), 255, 255, 255)))
                 for (double t = step; t < visible; t += step)
                 {
                     int off = (int)(t * rowsPerSecond);
@@ -411,9 +505,19 @@ namespace NostalgiaPlus.Render
                     float lx = x - sz.Width / 2;
                     if (lx < SpectroRect.Left) lx = SpectroRect.Left;
                     if (lx + sz.Width > SpectroRect.Right) lx = SpectroRect.Right - sz.Width;
-                    float ly = SpectroRect.Top + 3 + topInset;
-                    g.FillRectangle(chip, lx - 2, ly - 1, sz.Width + 4, sz.Height + 1);
-                    g.DrawString(label, font, brush, lx, ly);
+                    if (LaneRect.Height > 0)
+                    {
+                        int t0, t1;
+                        LaneTick(out t0, out t1);
+                        g.DrawLine(tickPen, x, t0, x, t1);
+                        g.DrawString(label, font, brush, lx, LaneTextY(sz));
+                    }
+                    else
+                    {
+                        float ly = SpectroRect.Top + 3 + topInset;
+                        g.FillRectangle(chip, lx - 2, ly - 1, sz.Width + 4, sz.Height + 1);
+                        g.DrawString(label, font, brush, lx, ly);
+                    }
                 }
         }
 
