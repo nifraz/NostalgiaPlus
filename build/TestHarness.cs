@@ -562,11 +562,33 @@ class TestHarness
         Check("and carry text", !string.IsNullOrEmpty(grid.ToolTipText),
               FirstLine(grid.ToolTipText));
 
+        // The timing reaches for a private member of ToolStrip, so it is worth a check:
+        // if that member ever moves, the tooltips quietly revert to five seconds, which
+        // is not long enough to finish reading one.
+        int hold = MenuFactory.TooltipHoldOf(menu);
+        Check("tooltips hold long enough to read", hold >= 20000, hold + " ms");
+
+        var sub = FindOwnerOfDropDown(menu.Items);
+        Check("submenus get the same timing",
+              sub == null || MenuFactory.TooltipHoldOf(sub) >= 20000,
+              sub == null ? "no submenu" : MenuFactory.TooltipHoldOf(sub) + " ms");
+
         int described = 0, total = 0;
         CountTips(menu.Items, ref described, ref total);
         Check("nearly every item explains itself", described >= total * 9 / 10,
               described + " of " + total);
         menu.Dispose();
+    }
+
+    static System.Windows.Forms.ToolStrip FindOwnerOfDropDown(
+        System.Windows.Forms.ToolStripItemCollection items)
+    {
+        foreach (System.Windows.Forms.ToolStripItem it in items)
+        {
+            var mi = it as System.Windows.Forms.ToolStripMenuItem;
+            if (mi != null && mi.HasDropDownItems) return mi.DropDown;
+        }
+        return null;
     }
 
     static string FirstLine(string text)

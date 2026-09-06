@@ -94,6 +94,7 @@ namespace NostalgiaPlus.Ui
             // A submenu does not inherit the context menu's tooltip setting, so every
             // dropdown has to be told separately or its items stay silent.
             menu.ShowItemToolTips = true;
+            TuneTooltip(menu);
             EnableTips(menu.Items);
 
             // Removing a handler that is not attached is a no-op, so this stays a single
@@ -202,6 +203,13 @@ namespace NostalgiaPlus.Ui
             return null;
         }
 
+        /// <summary>How long a tooltip stays up. Windows caps this near 32767ms.</summary>
+        private const int TipHoldMs = 30000;
+        /// <summary>How long the pointer has to rest before one appears.</summary>
+        private const int TipDelayMs = 350;
+        /// <summary>Moving to the next item within this shows its tip straight away.</summary>
+        private const int TipReshowMs = 80;
+
         private static void EnableTips(ToolStripItemCollection items)
         {
             foreach (ToolStripItem it in items)
@@ -209,8 +217,54 @@ namespace NostalgiaPlus.Ui
                 var mi = it as ToolStripMenuItem;
                 if (mi == null || !mi.HasDropDownItems) continue;
                 mi.DropDown.ShowItemToolTips = true;
+                TuneTooltip(mi.DropDown);
                 EnableTips(mi.DropDownItems);
             }
+        }
+
+        /// <summary>
+        /// Gives the tooltips time to be read.
+        ///
+        /// The default is five seconds, which was chosen for tooltips that say "Save".
+        /// These run to four or five lines and explain what a setting costs as well as
+        /// what it does - five seconds is not enough to finish one, and it vanishing
+        /// mid-sentence is worse than not having it. Thirty seconds, and it still goes
+        /// the moment the pointer moves.
+        ///
+        /// The ToolStrip owns its tooltip privately and exposes no way to configure it,
+        /// so this reaches for the internal instance. Best effort: if the member is not
+        /// there the tooltips still work, just at the default timing.
+        /// </summary>
+        private static void TuneTooltip(ToolStrip strip)
+        {
+            try
+            {
+                var pi = typeof(ToolStrip).GetProperty("ToolTip",
+                             System.Reflection.BindingFlags.Instance |
+                             System.Reflection.BindingFlags.NonPublic);
+                if (pi == null) return;
+                var tip = pi.GetValue(strip, null) as ToolTip;
+                if (tip == null) return;
+                tip.AutoPopDelay = TipHoldMs;
+                tip.InitialDelay = TipDelayMs;
+                tip.ReshowDelay = TipReshowMs;
+            }
+            catch { }
+        }
+
+        /// <summary>The hold time actually in force on a strip, or 0 if it could not be read.</summary>
+        public static int TooltipHoldOf(ToolStrip strip)
+        {
+            try
+            {
+                var pi = typeof(ToolStrip).GetProperty("ToolTip",
+                             System.Reflection.BindingFlags.Instance |
+                             System.Reflection.BindingFlags.NonPublic);
+                if (pi == null) return 0;
+                var tip = pi.GetValue(strip, null) as ToolTip;
+                return tip == null ? 0 : tip.AutoPopDelay;
+            }
+            catch { return 0; }
         }
 
         // ---------------- small builders ----------------
