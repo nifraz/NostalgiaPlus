@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
-using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -14,41 +13,37 @@ using NostalgiaPlus.Render;
 namespace NostalgiaPlus.Ui
 {
     /// <summary>
-    /// Borderless fullscreen mirrored stereo view.
+    /// Fullscreen view: two side-by-side per-channel panes rendered through the same
+    /// <see cref="StereoScope"/> the docked panel uses, plus waveform lanes, meters and
+    /// a row of quick buttons.
     ///
-    /// Frequency runs vertically (low at the bottom), time horizontally. Layout, outside
-    /// in: a spectrum curve pinned to each screen edge, then that channel's spectrogram,
-    /// then a narrow label gutter where the two meet. New columns enter at the outer
-    /// edges beside the curves and age toward the centre.
-    ///
-    /// Immersive mode keeps that arrangement but changes what it feels like: bright
-    /// content blooms, and every label, meter and gridline fades out while you are not
-    /// touching anything, so what is left is the image.
+    /// Immersive mode adds bloom and fades every label, meter and button while you are
+    /// not touching anything.
     /// </summary>
     public sealed class FullscreenView : Form
     {
         [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
         [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
 
+        private sealed class QuickButton
+        {
+            public string Name;
+            public Func<string> Value;
+            public Action Cycle;
+            public Rectangle Rect;
+        }
+
         private readonly Settings _settings;
         private readonly string _storageDir;
         private readonly LoopbackCapture _capture;
         private readonly NowPlayingProvider _nowPlaying;
 
-        private readonly SpectrumAnalyzer _analyzer = new SpectrumAnalyzer();
+        private readonly StereoScope _scope = new StereoScope();
         private readonly LoudnessMeter _meter = new LoudnessMeter();
-        private readonly DynamicRange _range = new DynamicRange();
         private readonly object _gate = new object();
 
-        private ColumnSpectrogram _sgL, _sgR;
-        private WaveformRing _wfL, _wfR;
-        private FrequencyMap _map;
+        private WaveformRing _wfA, _wfB;
         private int[] _lut;
-
-        private double[] _dbL = new double[0], _dbR = new double[0];
-        private double[] _smoothL = new double[0], _smoothR = new double[0];
-        private double[] _curveL = new double[0], _curveR = new double[0];
-        private double[] _intensity = new double[0];
         private double[] _chunkL = new double[8192], _chunkR = new double[8192];
         private long _meterCursor = -1;
 
@@ -56,27 +51,21 @@ namespace NostalgiaPlus.Ui
         private volatile bool _running;
         private volatile bool _frozen;
         private volatile bool _invalidatePending;
-        private int _scrollTick;
 
-        private Rectangle _curveLeftRect, _sgLeftRect, _gutterRect, _sgRightRect, _curveRightRect;
-        private Rectangle _waveLeftRect, _waveRightRect;
-        private int _sgramH;
-
-        // Offscreen composites, reused; the glow needs the spectrogram in display order,
-        // which the ring buffer is not.
-        private Bitmap _offL, _offR, _glow;
+        private Rectangle _scopeRect, _waveARect, _waveBRect;
+        private readonly List<QuickButton> _buttons = new List<QuickButton>();
 
         private Font _fontBig, _fontMid, _fontSmall, _fontTiny;
         private double _fps, _analysisMs, _paintMs;
-        private double _displayFloor = -95, _displayCeiling = -5;
         private string _title = "", _artist = "", _album = "";
-        private DateTime _hintUntil;
-        private DateTime _lastActivity = DateTime.UtcNow;
-        private DateTime _infoUntil = DateTime.MinValue;
+        private DateTime _hintUntil, _lastActivity = DateTime.UtcNow, _infoUntil = DateTime.MinValue;
         private bool _cursorHidden;
+        private int _mouseX = -1, _mouseY = -1;
+        private bool _mouseIn;
 
         private const double IdleHoldSeconds = 3.0;
         private const double IdleFadeSeconds = 1.5;
+        private const int ButtonBarHeight = 30;
 
         public FullscreenView(Settings settings, string storageDir,
                               LoopbackCapture capture, NowPlayingProvider nowPlaying)
@@ -99,7 +88,10 @@ namespace NostalgiaPlus.Ui
             _fontSmall = new Font("Segoe UI", 8.5f);
             _fontTiny = new Font("Segoe UI", 7.5f);
             _lut = Palette.BuildLut(_settings.Palette);
+            _scope.SetPalette(_lut);
             _hintUntil = DateTime.UtcNow.AddSeconds(4);
+
+            BuildButtons();
 
             var menu = new ContextMenuStrip();
             menu.Opening += delegate
@@ -108,7 +100,7 @@ namespace NostalgiaPlus.Ui
                 MenuFactory.Populate(menu, _settings, new MenuFactory.Options
                 {
                     IsFullscreen = true,
-                    ScrollPixels = Math.Max(1, _sgLeftRect.Width),
+                    ScrollPixels = _scope.Panes.Length > 0 ? _scope.Panes[0].SpectroRect.Width : 1,
                     IsFrozen = delegate { return _frozen; },
                     ToggleFreeze = delegate { _frozen = !_frozen; Invalidate(); },
                     ToggleFullscreen = delegate { Close(); },
@@ -119,18 +111,92 @@ namespace NostalgiaPlus.Ui
             ContextMenuStrip = menu;
         }
 
+        // ---------------- quick buttons ----------------
+
+        private static T Next<T>(T current)
+        {
+            var vals = (T[])Enum.GetValues(typeof(T));
+            int i = Array.IndexOf(vals, current);
+            return vals[(i + 1) % vals.Length];
+        }
+
+        private void BuildButtons()
+        {
+            _buttons.Clear();
+            Add("CHANNELS", delegate { return _settings.PairMode.ToString(); },
+                delegate { _settings.PairMode = Next(_settings.PairMode); OnSettingsChanged(true); });
+            Add("SCALE", delegate { return _settings.Scale.ToString(); },
+                delegate
+                {
+                    _settings.Scale = Next(_settings.Scale);
+                    if (_settings.Scale == FreqScale.Linear) { _settings.FMin = 0; _settings.FMax = 22050; }
+                    else { _settings.FMin = 25; _settings.FMax = 18000; }
+                    _settings.Preset = Preset.Custom;
+                    OnSettingsChanged(true);
+                });
+            Add("RESOLUTION", delegate { return _settings.Quality.ToString(); },
+                delegate { _settings.Quality = Next(_settings.Quality); _settings.Preset = Preset.Custom; OnSettingsChanged(false); });
+            Add("STYLE", delegate { return _settings.Style.ToString(); },
+                delegate { _settings.Style = Next(_settings.Style); OnSettingsChanged(false); });
+            Add("PALETTE", delegate { return Palette.DisplayName(_settings.Palette); },
+                delegate { _settings.Palette = Next(_settings.Palette); _settings.Preset = Preset.Custom; OnSettingsChanged(false); });
+            Add("TILT", delegate { return _settings.TiltDbPerOctave.ToString("0.0") + " dB/oct"; },
+                delegate
+                {
+                    double[] t = { 0, 1.5, 3.0, 4.5, 6.0 };
+                    int i = 0;
+                    for (int k = 0; k < t.Length; k++) if (Math.Abs(t[k] - _settings.TiltDbPerOctave) < 0.01) i = k;
+                    _settings.TiltDbPerOctave = t[(i + 1) % t.Length];
+                    _settings.Preset = Preset.Custom;
+                    OnSettingsChanged(false);
+                });
+            Add("CONTRAST", delegate { return (_settings.Contrast * 100).ToString("0") + "%"; },
+                delegate
+                {
+                    double[] c = { 0.15, 0.25, 0.40, 0.55, 0.70, 0.82 };
+                    int i = 0;
+                    for (int k = 0; k < c.Length; k++) if (Math.Abs(c[k] - _settings.Contrast) < 0.01) i = k;
+                    _settings.Contrast = c[(i + 1) % c.Length];
+                    OnSettingsChanged(false);
+                });
+            Add("GRAPH", delegate { return _settings.CurveWidthPct + "%"; },
+                delegate
+                {
+                    int[] p = { 0, 8, 12, 18, 25, 33, 45 };
+                    int i = 0;
+                    for (int k = 0; k < p.Length; k++) if (p[k] == _settings.CurveWidthPct) i = k;
+                    _settings.CurveWidthPct = p[(i + 1) % p.Length];
+                    OnSettingsChanged(true);
+                });
+            Add("MIRROR", delegate { return _settings.MirrorLeftPane ? "On" : "Off"; },
+                delegate { _settings.MirrorLeftPane = !_settings.MirrorLeftPane; OnSettingsChanged(true); });
+            Add("SPEED", delegate { return "1/" + _settings.ScrollDivider; },
+                delegate
+                {
+                    int[] d = { 1, 2, 4, 8 };
+                    int i = 0;
+                    for (int k = 0; k < d.Length; k++) if (d[k] == _settings.ScrollDivider) i = k;
+                    _settings.ScrollDivider = d[(i + 1) % d.Length];
+                    OnSettingsChanged(false);
+                });
+        }
+
+        private void Add(string name, Func<string> value, Action cycle)
+        {
+            var b = new QuickButton();
+            b.Name = name; b.Value = value; b.Cycle = cycle;
+            _buttons.Add(b);
+        }
+
+        // ---------------- lifecycle ----------------
+
         public void ShowOn(Control anchor)
         {
             Screen screen = anchor != null && anchor.IsHandleCreated
-                ? Screen.FromControl(anchor)
-                : Screen.PrimaryScreen;
+                ? Screen.FromControl(anchor) : Screen.PrimaryScreen;
             ShowAt(screen.Bounds, true);
         }
 
-        /// <summary>
-        /// Opens at explicit bounds. Kept separate from <see cref="ShowOn"/> so the render
-        /// harness can drive the real view offscreen instead of taking over a display.
-        /// </summary>
         public void ShowAt(Rectangle bounds, bool activate)
         {
             StartPosition = FormStartPosition.Manual;
@@ -138,23 +204,6 @@ namespace NostalgiaPlus.Ui
             Show();
             if (activate) Activate();
             RefreshNowPlaying();
-            StartWorker();
-        }
-
-        private void OnSettingsChanged(bool rebuildGeometry)
-        {
-            _lut = Palette.BuildLut(_settings.Palette);
-            lock (_gate) { _range.Reset(); }
-            if (rebuildGeometry) RebuildGeometry();
-            if (_storageDir != null) _settings.Save(_storageDir);
-            Touch();
-            Invalidate();
-        }
-
-        // ---------------- lifecycle ----------------
-
-        private void StartWorker()
-        {
             if (_running) return;
             RebuildGeometry();
             _running = true;
@@ -164,17 +213,23 @@ namespace NostalgiaPlus.Ui
             _worker.Start();
         }
 
-        private void StopWorker()
+        private void OnSettingsChanged(bool rebuildGeometry)
+        {
+            _lut = Palette.BuildLut(_settings.Palette);
+            _scope.SetPalette(_lut);
+            lock (_gate) { _scope.ResetRange(); }
+            if (rebuildGeometry) RebuildGeometry();
+            if (_storageDir != null) _settings.Save(_storageDir);
+            Touch();
+            Invalidate();
+        }
+
+        protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _running = false;
             Thread t = _worker;
             if (t != null && t.IsAlive) t.Join(1200);
             _worker = null;
-        }
-
-        protected override void OnFormClosing(FormClosingEventArgs e)
-        {
-            StopWorker();
             ShowCursorIfHidden();
             base.OnFormClosing(e);
         }
@@ -183,13 +238,9 @@ namespace NostalgiaPlus.Ui
         {
             if (disposing)
             {
-                StopWorker();
+                _running = false;
                 ShowCursorIfHidden();
-                if (_sgL != null) { _sgL.Dispose(); _sgL = null; }
-                if (_sgR != null) { _sgR.Dispose(); _sgR = null; }
-                if (_offL != null) { _offL.Dispose(); _offL = null; }
-                if (_offR != null) { _offR.Dispose(); _offR = null; }
-                if (_glow != null) { _glow.Dispose(); _glow = null; }
+                _scope.Dispose();
                 if (_fontBig != null) _fontBig.Dispose();
                 if (_fontMid != null) _fontMid.Dispose();
                 if (_fontSmall != null) _fontSmall.Dispose();
@@ -207,32 +258,24 @@ namespace NostalgiaPlus.Ui
                     string[] info = _nowPlaying();
                     if (info != null && info.Length >= 3)
                     {
-                        _title = info[0] ?? "";
-                        _artist = info[1] ?? "";
-                        _album = info[2] ?? "";
+                        _title = info[0] ?? ""; _artist = info[1] ?? ""; _album = info[2] ?? "";
                     }
                 }
                 catch { }
             }
-            // A track change is worth showing even if the furniture has faded out.
             _infoUntil = DateTime.UtcNow.AddSeconds(6);
-            lock (_gate) { _range.Reset(); _meter.Reset(); }
+            lock (_gate) { _scope.ResetRange(); _meter.Reset(); }
         }
 
         // ---------------- idle fading ----------------
 
-        private void Touch()
-        {
-            _lastActivity = DateTime.UtcNow;
-            ShowCursorIfHidden();
-        }
+        private void Touch() { _lastActivity = DateTime.UtcNow; ShowCursorIfHidden(); }
 
         private void ShowCursorIfHidden()
         {
             if (_cursorHidden) { _cursorHidden = false; try { Cursor.Show(); } catch { } }
         }
 
-        /// <summary>Opacity for labels, meters and gridlines; 1 unless idle in immersive mode.</summary>
         private double FurnitureAlpha()
         {
             if (!_settings.FsImmersive || !_settings.FsAutoHide) return 1.0;
@@ -240,13 +283,6 @@ namespace NostalgiaPlus.Ui
             if (idle <= IdleHoldSeconds) return 1.0;
             if (idle >= IdleHoldSeconds + IdleFadeSeconds) return 0.0;
             return 1.0 - (idle - IdleHoldSeconds) / IdleFadeSeconds;
-        }
-
-        private static Color Fade(Color c, double a)
-        {
-            int alpha = (int)Math.Round(c.A * a);
-            if (alpha < 0) alpha = 0; else if (alpha > 255) alpha = 255;
-            return Color.FromArgb(alpha, c.R, c.G, c.B);
         }
 
         // ---------------- geometry ----------------
@@ -261,76 +297,51 @@ namespace NostalgiaPlus.Ui
         {
             lock (_gate)
             {
-                int w = Math.Max(8, ClientSize.Width);
-                int h = Math.Max(8, ClientSize.Height);
+                int w = Math.Max(16, ClientSize.Width);
+                int h = Math.Max(16, ClientSize.Height);
 
-                // A slimmer ribbon while immersive: a compressed master's envelope is
-                // nearly constant, so a tall lane spends pixels on a solid block.
                 int waveH = 0;
-                if (_settings.FsShowWaveform)
-                    waveH = _settings.FsImmersive ? Math.Max(40, h / 18) : Math.Max(56, h / 10);
-                int sgramH = Math.Max(1, h - waveH);
+                if (_settings.FsShowWaveform && _settings.WaveHeightPct > 0)
+                    waveH = Math.Max(24, h * Math.Min(40, _settings.WaveHeightPct) / 100);
 
-                int curveW = _settings.FsCurveWidth;
-                if (curveW < 40) curveW = 40;
-                if (curveW > w / 4) curveW = w / 4;
-                int gutterW = _settings.FsGutterWidth;
-                if (gutterW < 0) gutterW = 0;
-                if (gutterW > 90) gutterW = 90;
+                _scopeRect = new Rectangle(0, 0, w, Math.Max(16, h - waveH));
+                double sr = _capture != null ? _capture.SampleRate : 48000;
+                _scope.Layout(_scopeRect, _settings, sr);
 
-                int sgW = Math.Max(1, (w - 2 * curveW - gutterW) / 2);
+                ChannelPane[] panes = _scope.Panes;
+                _waveARect = waveH > 0 && panes.Length > 0
+                    ? new Rectangle(panes[0].SpectroRect.X, _scopeRect.Bottom, panes[0].SpectroRect.Width, waveH)
+                    : Rectangle.Empty;
+                _waveBRect = waveH > 0 && panes.Length > 1
+                    ? new Rectangle(panes[1].SpectroRect.X, _scopeRect.Bottom, panes[1].SpectroRect.Width, waveH)
+                    : Rectangle.Empty;
 
-                _sgramH = sgramH;
-                _curveLeftRect = new Rectangle(0, 0, curveW, sgramH);
-                _sgLeftRect = new Rectangle(curveW, 0, sgW, sgramH);
-                _gutterRect = new Rectangle(curveW + sgW, 0, gutterW, sgramH);
-                _sgRightRect = new Rectangle(curveW + sgW + gutterW, 0, sgW, sgramH);
-                int rightCurveX = _sgRightRect.Right;
-                _curveRightRect = new Rectangle(rightCurveX, 0, Math.Max(1, w - rightCurveX), sgramH);
+                int capA = Math.Max(8, _waveARect.Width + 4);
+                if (_wfA == null) _wfA = new WaveformRing(capA); else _wfA.Resize(capA);
+                int capB = Math.Max(8, _waveBRect.Width + 4);
+                if (_wfB == null) _wfB = new WaveformRing(capB); else _wfB.Resize(capB);
 
-                _waveLeftRect = new Rectangle(_sgLeftRect.X, sgramH, sgW, waveH);
-                _waveRightRect = new Rectangle(_sgRightRect.X, sgramH, sgW, waveH);
-
-                double nyq = (_capture != null ? _capture.SampleRate : 48000) * 0.5;
-                double fMax = Math.Min(_settings.FMax, nyq);
-                double fMin = _settings.Scale == FreqScale.Linear
-                    ? Math.Max(0, _settings.FMin) : Math.Max(10.0, _settings.FMin);
-
-                _map = new FrequencyMap(_settings.Scale, sgramH, fMin, fMax);
-
-                if (_sgL == null) _sgL = new ColumnSpectrogram(sgW, sgramH); else _sgL.Resize(sgW, sgramH);
-                if (_sgR == null) _sgR = new ColumnSpectrogram(sgW, sgramH); else _sgR.Resize(sgW, sgramH);
-                _sgL.Clear(_lut[0]);
-                _sgR.Clear(_lut[0]);
-
-                DisposeOffscreen();
-
-                int cap = sgW + 4;
-                if (_wfL == null) _wfL = new WaveformRing(cap); else _wfL.Resize(cap);
-                if (_wfR == null) _wfR = new WaveformRing(cap); else _wfR.Resize(cap);
-
-                EnsureArrays(sgramH);
+                LayoutButtons(w, h, waveH);
             }
         }
 
-        private void DisposeOffscreen()
+        private void LayoutButtons(int w, int h, int waveH)
         {
-            if (_offL != null) { _offL.Dispose(); _offL = null; }
-            if (_offR != null) { _offR.Dispose(); _offR = null; }
-            if (_glow != null) { _glow.Dispose(); _glow = null; }
-        }
-
-        private void EnsureArrays(int n)
-        {
-            if (_dbL.Length == n) return;
-            _dbL = new double[n]; _dbR = new double[n];
-            _smoothL = new double[n]; _smoothR = new double[n];
-            _curveL = new double[n]; _curveR = new double[n];
-            _intensity = new double[n];
-            for (int i = 0; i < n; i++)
+            int total = 0;
+            var widths = new int[_buttons.Count];
+            using (var g = CreateGraphics())
+                for (int i = 0; i < _buttons.Count; i++)
+                {
+                    string t = _buttons[i].Name + "  " + _buttons[i].Value();
+                    widths[i] = (int)g.MeasureString(t, _fontTiny).Width + 22;
+                    total += widths[i] + 6;
+                }
+            int x = (w - total) / 2;
+            int y = h - waveH - ButtonBarHeight - 8;
+            for (int i = 0; i < _buttons.Count; i++)
             {
-                _smoothL[i] = SpectrumAnalyzer.FloorDb;
-                _smoothR[i] = SpectrumAnalyzer.FloorDb;
+                _buttons[i].Rect = new Rectangle(x, y, widths[i], ButtonBarHeight);
+                x += widths[i] + 6;
             }
         }
 
@@ -377,91 +388,38 @@ namespace NostalgiaPlus.Ui
 
         private void AnalyseOnce(double dt)
         {
-            FrequencyMap map = _map;
             LoopbackCapture cap = _capture;
-            if (map == null || cap == null || _sgL == null || _sgR == null) return;
-
-            _analyzer.Configure(cap.SampleRate, _settings.Quality, _settings.Window);
+            if (cap == null) return;
             _meter.Configure(cap.SampleRate);
-
-            int n = map.Width;
-            if (_dbL.Length < n) return;
 
             if (_meterCursor < 0) _meterCursor = Math.Max(0, cap.Ring.TotalFrames - 1024);
             long next;
             int got = cap.Ring.ReadRange(_meterCursor, _chunkL, _chunkR, _chunkL.Length, out next);
             _meterCursor = next;
-            float loL = 0, hiL = 0, loR = 0, hiR = 0;
+
+            float loA = 0, hiA = 0, loB = 0, hiB = 0;
             if (got > 0)
             {
                 _meter.Process(_chunkL, _chunkR, got);
+                bool ms = _settings.PairMode == ChannelPairMode.MidSide;
                 for (int i = 0; i < got; i++)
                 {
-                    float a = (float)_chunkL[i], b = (float)_chunkR[i];
-                    if (a < loL) loL = a; if (a > hiL) hiL = a;
-                    if (b < loR) loR = b; if (b > hiR) hiR = b;
+                    double l = _chunkL[i], r = _chunkR[i];
+                    float a = (float)(ms ? (l + r) * 0.5 : l);
+                    float b = (float)(ms ? (l - r) * 0.5 : r);
+                    if (a < loA) loA = a; if (a > hiA) hiA = a;
+                    if (b < loB) loB = b; if (b > hiB) hiB = b;
                 }
-            }
-
-            if (!_analyzer.ComputeStereo(cap.Ring, map, _dbL, _dbR,
-                                         _settings.Aggregate, _settings.TiltDbPerOctave))
-                return;
-
-            double aCoef = 1.0 - Math.Exp(-dt / Math.Max(0.001, _settings.AttackMs / 1000.0));
-            double rCoef = 1.0 - Math.Exp(-dt / Math.Max(0.001, _settings.ReleaseMs / 1000.0));
-            for (int i = 0; i < n; i++)
-            {
-                double v = _dbL[i], c = _smoothL[i];
-                _smoothL[i] = c + (v - c) * (v > c ? aCoef : rCoef);
-                v = _dbR[i]; c = _smoothR[i];
-                _smoothR[i] = c + (v - c) * (v > c ? aCoef : rCoef);
-            }
-
-            double floorDb, ceilDb;
-            if (_settings.AdaptiveRange)
-            {
-                _range.Observe(_dbL, n, 0.94);
-                _range.Observe(_dbR, n, 1.0);
-                _range.Update(dt);
-                floorDb = _range.Floor; ceilDb = _range.Ceiling;
-            }
-            else { floorDb = _settings.FloorDb; ceilDb = _settings.CeilingDb; }
-            if (ceilDb - floorDb < 1) ceilDb = floorDb + 1;
-            double inv = 1.0 / (ceilDb - floorDb);
-
-            bool push = !_frozen;
-            int div = _settings.ScrollDivider;
-            if (div > 1)
-            {
-                _scrollTick++;
-                if (_scrollTick < div) push = false; else _scrollTick = 0;
             }
 
             lock (_gate)
             {
-                if (push)
+                if (!_scope.Analyse(cap, _settings, dt, _frozen)) return;
+                if (!_frozen)
                 {
-                    for (int i = 0; i < n; i++)
-                    {
-                        double t = (_dbL[i] - floorDb) * inv;
-                        _intensity[i] = t < 0 ? 0 : (t > 1 ? 1 : t);
-                    }
-                    _sgL.PushColumn(_intensity, n, _lut);
-
-                    for (int i = 0; i < n; i++)
-                    {
-                        double t = (_dbR[i] - floorDb) * inv;
-                        _intensity[i] = t < 0 ? 0 : (t > 1 ? 1 : t);
-                    }
-                    _sgR.PushColumn(_intensity, n, _lut);
-
-                    _wfL.Push(loL, hiL);
-                    _wfR.Push(loR, hiR);
+                    if (_wfA != null) _wfA.Push(loA, hiA);
+                    if (_wfB != null) _wfB.Push(loB, hiB);
                 }
-                Array.Copy(_smoothL, _curveL, n);
-                Array.Copy(_smoothR, _curveR, n);
-                _displayFloor = floorDb;
-                _displayCeiling = ceilDb;
             }
         }
 
@@ -469,21 +427,15 @@ namespace NostalgiaPlus.Ui
 
         protected override void OnPaint(PaintEventArgs e)
         {
-            var paintTimer = Stopwatch.StartNew();
+            var t = Stopwatch.StartNew();
             PaintFrame(e.Graphics);
-            paintTimer.Stop();
-            // Smoothed so the readout is stable; glow is the expensive part and this is
-            // how you tell whether it is affordable on a given machine.
-            _paintMs = _paintMs * 0.9 + paintTimer.Elapsed.TotalMilliseconds * 0.1;
+            t.Stop();
+            _paintMs = _paintMs * 0.9 + t.Elapsed.TotalMilliseconds * 0.1;
         }
 
         private void PaintFrame(Graphics g)
         {
             g.Clear(Palette.Background(_lut));
-
-            FrequencyMap map = _map;
-            if (map == null) return;
-
             double furniture = FurnitureAlpha();
             if (furniture <= 0.001 && !_cursorHidden)
             {
@@ -491,274 +443,103 @@ namespace NostalgiaPlus.Ui
                 try { Cursor.Hide(); } catch { }
             }
 
+            bool glow = _settings.FsImmersive && _settings.FsGlow;
             lock (_gate)
             {
-                DrawSpectrogram(g, _sgL, ref _offL, _sgLeftRect, false);
-                DrawSpectrogram(g, _sgR, ref _offR, _sgRightRect, true);
+                _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture);
+                if (_settings.FsShowGrid && furniture > 0.004)
+                    _scope.DrawGrid(g, _settings, _fontTiny, furniture,
+                                    _settings.FsShowOverlays ? 84 : 0);
+                _scope.DrawPaneLabels(g, _fontSmall, furniture, _settings.FsShowOverlays ? 84 : 0);
             }
 
-            if (_settings.FsShowGrid && furniture > 0.004) DrawGrid(g, map, furniture);
-            DrawCurves(g, map);
-            if (_settings.FsShowWaveform && _waveLeftRect.Height > 0) DrawWaveforms(g);
+            if (_settings.ShowHud && _mouseIn && furniture > 0.004)
+            {
+                lock (_gate)
+                {
+                    _scope.DrawHover(g, new Point(_mouseX, _mouseY), _settings, _fontSmall, _fontTiny);
+                }
+            }
+            if (_settings.FsShowWaveform && _waveARect.Height > 0) DrawWaveforms(g);
             if (_settings.FsShowOverlays) DrawOverlays(g, furniture);
+            if (furniture > 0.004) DrawButtons(g, furniture);
             DrawHint(g);
-        }
-
-        /// <summary>
-        /// Draws one spectrogram, adding bloom in immersive mode.
-        ///
-        /// The glow is built from an offscreen composite rather than the ring bitmap
-        /// directly: the ring stores columns rotated by a head index, so blurring it
-        /// would bleed the newest column into the oldest. Bright content is isolated with
-        /// a colour matrix that also converts luminance into alpha, so the halo adds light
-        /// where the image is bright and leaves dark areas untouched.
-        /// </summary>
-        private void DrawSpectrogram(Graphics g, ColumnSpectrogram sg, ref Bitmap off,
-                                     Rectangle dest, bool newestOnRight)
-        {
-            if (sg == null || dest.Width <= 0 || dest.Height <= 0) return;
-
-            if (!_settings.FsImmersive || !_settings.FsGlow)
-            {
-                sg.Draw(g, dest, newestOnRight);
-                return;
-            }
-
-            if (off == null || off.Width != dest.Width || off.Height != dest.Height)
-            {
-                if (off != null) off.Dispose();
-                off = new Bitmap(dest.Width, dest.Height, PixelFormat.Format32bppPArgb);
-            }
-            using (var go = Graphics.FromImage(off))
-            {
-                go.Clear(Palette.Background(_lut));
-                sg.Draw(go, new Rectangle(0, 0, dest.Width, dest.Height), newestOnRight);
-            }
-            g.DrawImageUnscaled(off, dest.X, dest.Y);
-
-            int gw = Math.Max(8, dest.Width / 8);
-            int gh = Math.Max(8, dest.Height / 8);
-            if (_glow == null || _glow.Width != gw || _glow.Height != gh)
-            {
-                if (_glow != null) _glow.Dispose();
-                _glow = new Bitmap(gw, gh, PixelFormat.Format32bppArgb);
-            }
-
-            using (var gg = Graphics.FromImage(_glow))
-            using (var attr = new ImageAttributes())
-            {
-                gg.CompositingMode = CompositingMode.SourceCopy;
-                gg.Clear(Color.Transparent);
-                // RGB boosted; alpha derived from luminance with a threshold, so only
-                // bright material contributes.
-                var m = new ColorMatrix(new float[][] {
-                    new float[] { 1.6f, 0,    0,    0.55f, 0 },
-                    new float[] { 0,    1.6f, 0,    0.55f, 0 },
-                    new float[] { 0,    0,    1.6f, 0.55f, 0 },
-                    new float[] { 0,    0,    0,    0f,    0 },
-                    new float[] { 0,    0,    0,   -0.38f, 1 }
-                });
-                attr.SetColorMatrix(m);
-                gg.InterpolationMode = InterpolationMode.HighQualityBilinear;
-                gg.DrawImage(off, new Rectangle(0, 0, gw, gh),
-                             0, 0, off.Width, off.Height, GraphicsUnit.Pixel, attr);
-            }
-
-            InterpolationMode oldMode = g.InterpolationMode;
-            g.InterpolationMode = InterpolationMode.Bilinear;   // cheap, and blur is the point
-            g.DrawImage(_glow, dest, 0, 0, gw, gh, GraphicsUnit.Pixel);
-            g.InterpolationMode = oldMode;
-        }
-
-        private int FreqToY(FrequencyMap map, double f)
-        {
-            double idx = map.FreqToX(f);
-            return _sgramH - 1 - (int)Math.Round(idx);
-        }
-
-        private void BuildGridLines(FrequencyMap map, List<double> freqs, List<string> labels)
-        {
-            if (map.Scale == FreqScale.Linear)
-            {
-                for (double f = 2000; f <= map.FMax; f += 2000)
-                { freqs.Add(f); labels.Add((f / 1000).ToString("0") + "k"); }
-            }
-            else
-            {
-                for (int midi = 12; midi <= 132; midi += 12)
-                {
-                    double f = FrequencyMap.MidiToFreq(midi);
-                    if (f < map.FMin || f > map.FMax) continue;
-                    freqs.Add(f); labels.Add("C" + ((midi / 12) - 1));
-                }
-            }
-        }
-
-        private void DrawGrid(Graphics g, FrequencyMap map, double alpha)
-        {
-            var freqs = new List<double>();
-            var labels = new List<string>();
-            BuildGridLines(map, freqs, labels);
-
-            if (_gutterRect.Width > 0)
-                using (var bg = new SolidBrush(Fade(Color.FromArgb(255, 12, 12, 15), alpha)))
-                    g.FillRectangle(bg, _gutterRect);
-
-            using (var pen = new Pen(Fade(Color.FromArgb(38, 255, 255, 255), alpha)))
-            using (var gutterPen = new Pen(Fade(Color.FromArgb(70, 255, 255, 255), alpha)))
-            using (var brush = new SolidBrush(Fade(Color.FromArgb(185, 232, 232, 238), alpha)))
-            {
-                int labelFloor = _settings.FsShowOverlays ? 84 : 0;
-                for (int i = 0; i < freqs.Count; i++)
-                {
-                    int y = FreqToY(map, freqs[i]);
-                    if (y < 0 || y >= _sgramH) continue;
-                    g.DrawLine(pen, 0, y, ClientSize.Width, y);
-
-                    if (_gutterRect.Width >= 22 && y >= labelFloor)
-                    {
-                        g.DrawLine(gutterPen, _gutterRect.Left, y, _gutterRect.Right, y);
-                        SizeF sz = g.MeasureString(labels[i], _fontTiny);
-                        float lx = _gutterRect.Left + (_gutterRect.Width - sz.Width) / 2;
-                        g.DrawString(labels[i], _fontTiny, brush, lx, y - 13);
-                    }
-                }
-            }
-
-            if (_gutterRect.Width > 0)
-                using (var edge = new Pen(Fade(Color.FromArgb(45, 255, 255, 255), alpha)))
-                {
-                    g.DrawLine(edge, _gutterRect.Left, 0, _gutterRect.Left, _sgramH);
-                    g.DrawLine(edge, _gutterRect.Right - 1, 0, _gutterRect.Right - 1, _sgramH);
-                }
-        }
-
-        private void DrawCurves(Graphics g, FrequencyMap map)
-        {
-            int n = _sgramH;
-            if (n < 2 || _curveL.Length < n) return;
-
-            var left = new PointF[n + 2];
-            var right = new PointF[n + 2];
-            float ampL = _curveLeftRect.Width;
-            float ampR = _curveRightRect.Width;
-            int leftBase = _curveLeftRect.Left;
-            int rightBase = _curveRightRect.Right;
-
-            lock (_gate)
-            {
-                double floorDb = _displayFloor, ceilDb = _displayCeiling;
-                double span = Math.Max(1, ceilDb - floorDb);
-                for (int y = 0; y < n; y++)
-                {
-                    int i = n - 1 - y;
-                    double tl = (_curveL[i] - floorDb) / span;
-                    if (tl < 0) tl = 0; else if (tl > 1) tl = 1;
-                    double tr = (_curveR[i] - floorDb) / span;
-                    if (tr < 0) tr = 0; else if (tr > 1) tr = 1;
-                    left[y] = new PointF((float)(leftBase + tl * ampL), y);
-                    right[y] = new PointF((float)(rightBase - tr * ampR), y);
-                }
-            }
-            left[n] = new PointF(leftBase, n - 1); left[n + 1] = new PointF(leftBase, 0);
-            right[n] = new PointF(rightBase, n - 1); right[n + 1] = new PointF(rightBase, 0);
-
-            var old = g.SmoothingMode;
-            g.SmoothingMode = SmoothingMode.AntiAlias;
-
-            Color hi = Palette.ColorAt(_lut, 0.85);
-            Color lo = Palette.ColorAt(_lut, 0.4);
-            // Lighter body in immersive mode so the curves read as a glow, not a slab.
-            int bodyAlpha = _settings.FsImmersive ? 130 : 210;
-
-            using (var pathL = new GraphicsPath())
-            using (var pathR = new GraphicsPath())
-            {
-                pathL.AddPolygon(left);
-                pathR.AddPolygon(right);
-                using (var fill = new LinearGradientBrush(
-                        new Rectangle(_curveLeftRect.X, 0, Math.Max(1, _curveLeftRect.Width), 1),
-                        Color.FromArgb(bodyAlpha, hi), Color.FromArgb(20, lo), LinearGradientMode.Horizontal))
-                    g.FillPath(fill, pathL);
-                using (var fill = new LinearGradientBrush(
-                        new Rectangle(_curveRightRect.X, 0, Math.Max(1, _curveRightRect.Width), 1),
-                        Color.FromArgb(20, lo), Color.FromArgb(bodyAlpha, hi), LinearGradientMode.Horizontal))
-                    g.FillPath(fill, pathR);
-            }
-
-            using (var pen = new Pen(Color.FromArgb(235, hi), 1.3f))
-            {
-                g.DrawLines(pen, Trim(left, n));
-                g.DrawLines(pen, Trim(right, n));
-            }
-
-            if (!_settings.FsImmersive)
-                using (var edge = new Pen(Color.FromArgb(50, 255, 255, 255)))
-                {
-                    g.DrawLine(edge, _curveLeftRect.Right, 0, _curveLeftRect.Right, _sgramH);
-                    g.DrawLine(edge, _curveRightRect.Left, 0, _curveRightRect.Left, _sgramH);
-                }
-
-            g.SmoothingMode = old;
-        }
-
-        private static PointF[] Trim(PointF[] src, int n)
-        {
-            var outp = new PointF[n];
-            Array.Copy(src, outp, n);
-            return outp;
         }
 
         private void DrawWaveforms(Graphics g)
         {
             using (var bg = new SolidBrush(Color.FromArgb(255, 10, 10, 12)))
-                g.FillRectangle(bg, 0, _waveLeftRect.Y, ClientSize.Width, _waveLeftRect.Height);
+                g.FillRectangle(bg, 0, _waveARect.Y, ClientSize.Width, _waveARect.Height);
 
             Color c = Palette.ColorAt(_lut, 0.86);
             using (var pen = new Pen(Color.FromArgb(215, c)))
             using (var mid = new Pen(Color.FromArgb(45, 255, 255, 255)))
             {
-                int midY = _waveLeftRect.Y + _waveLeftRect.Height / 2;
-                float half = _waveLeftRect.Height / 2f - 2;
+                int midY = _waveARect.Y + _waveARect.Height / 2;
+                float half = _waveARect.Height / 2f - 2;
                 g.DrawLine(mid, 0, midY, ClientSize.Width, midY);
-
                 lock (_gate)
                 {
-                    for (int a = 0; a < _waveLeftRect.Width; a++)
-                    {
-                        int x = _waveLeftRect.X + a;
-                        float lo, hi;
-                        _wfL.Get(a, out lo, out hi);
-                        g.DrawLine(pen, x, midY - hi * half, x, midY - lo * half);
-                    }
-                    for (int a = 0; a < _waveRightRect.Width; a++)
-                    {
-                        int x = _waveRightRect.Right - 1 - a;
-                        float lo, hi;
-                        _wfR.Get(a, out lo, out hi);
-                        g.DrawLine(pen, x, midY - hi * half, x, midY - lo * half);
-                    }
+                    ChannelPane[] panes = _scope.Panes;
+                    if (panes.Length > 0)
+                        DrawWave(g, pen, _wfA, _waveARect, midY, half, panes[0].CurveOnLeft);
+                    if (_waveBRect.Width > 0 && panes.Length > 1)
+                        DrawWave(g, pen, _wfB, _waveBRect, midY, half, panes[1].CurveOnLeft);
+                }
+            }
+        }
+
+        private void DrawWave(Graphics g, Pen pen, WaveformRing ring, Rectangle r,
+                              int midY, float half, bool curveOnLeft)
+        {
+            if (ring == null || r.Width <= 0) return;
+            // Match the spectrogram above: newest sits against that pane's curve.
+            bool newestOnRight = !curveOnLeft;
+            for (int a = 0; a < r.Width; a++)
+            {
+                int x = newestOnRight ? r.Right - 1 - a : r.X + a;
+                float lo, hi;
+                ring.Get(a, out lo, out hi);
+                g.DrawLine(pen, x, midY - hi * half, x, midY - lo * half);
+            }
+        }
+
+        private void DrawButtons(Graphics g, double alpha)
+        {
+            for (int i = 0; i < _buttons.Count; i++)
+            {
+                QuickButton b = _buttons[i];
+                if (b.Rect.Width <= 0) continue;
+                using (var back = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(190, 18, 18, 22), alpha)))
+                using (var edge = new Pen(StereoScope.FadeColor(Color.FromArgb(70, 255, 255, 255), alpha)))
+                {
+                    g.FillRectangle(back, b.Rect);
+                    g.DrawRectangle(edge, b.Rect);
+                }
+                using (var nameBrush = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(140, 190, 190, 200), alpha)))
+                using (var valBrush = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(235, 245, 245, 250), alpha)))
+                {
+                    g.DrawString(b.Name, _fontTiny, nameBrush, b.Rect.X + 8, b.Rect.Y + 2);
+                    g.DrawString(b.Value(), _fontTiny, valBrush, b.Rect.X + 8, b.Rect.Y + 14);
                 }
             }
         }
 
         private void DrawOverlays(Graphics g, double alpha)
         {
-            // Track info outlives the furniture fade briefly after a song change.
             double infoAlpha = alpha;
             if (DateTime.UtcNow < _infoUntil) infoAlpha = 1.0;
             if (alpha <= 0.004 && infoAlpha <= 0.004) return;
 
             int barH = 78;
-            double barAlpha = Math.Max(alpha, infoAlpha);
             using (var grad = new LinearGradientBrush(new Rectangle(0, 0, ClientSize.Width, barH),
-                       Fade(Color.FromArgb(190, 0, 0, 0), barAlpha),
+                       StereoScope.FadeColor(Color.FromArgb(190, 0, 0, 0), Math.Max(alpha, infoAlpha)),
                        Color.FromArgb(0, 0, 0, 0), LinearGradientMode.Vertical))
                 g.FillRectangle(grad, 0, 0, ClientSize.Width, barH);
 
             if (infoAlpha > 0.004)
-                using (var w = new SolidBrush(Fade(Color.FromArgb(240, 245, 245, 248), infoAlpha)))
-                using (var d = new SolidBrush(Fade(Color.FromArgb(170, 200, 200, 210), infoAlpha)))
+                using (var w = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(240, 245, 245, 248), infoAlpha)))
+                using (var d = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(170, 200, 200, 210), infoAlpha)))
                 {
                     if (_title.Length > 0) g.DrawString(_title, _fontBig, w, 16, 6);
                     string sub = _artist;
@@ -776,15 +557,13 @@ namespace NostalgiaPlus.Ui
                 corr = _meter.Correlation; bal = _meter.Balance;
             }
 
-            using (var lbl = new SolidBrush(Fade(Color.FromArgb(150, 190, 190, 200), alpha)))
-            using (var val = new SolidBrush(Fade(Color.FromArgb(240, 245, 245, 248), alpha)))
-            using (var warn = new SolidBrush(Fade(Color.FromArgb(255, 255, 120, 90), alpha)))
+            using (var lbl = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(150, 190, 190, 200), alpha)))
+            using (var val = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(240, 245, 245, 248), alpha)))
+            using (var warn = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(255, 255, 120, 90), alpha)))
             {
                 string[] names = { "LUFS-M", "LUFS-S", "TRUE PK", "CREST" };
-                string[] vals = {
-                    mLufs.ToString("0.0"), sLufs.ToString("0.0"),
-                    tp.ToString("0.0"), crest.ToString("0.0")
-                };
+                string[] vals = { mLufs.ToString("0.0"), sLufs.ToString("0.0"),
+                                  tp.ToString("0.0"), crest.ToString("0.0") };
                 int x = ClientSize.Width - 16;
                 for (int i = names.Length - 1; i >= 0; i--)
                 {
@@ -797,8 +576,7 @@ namespace NostalgiaPlus.Ui
                 }
             }
 
-            int mw = 210;
-            int mx = ClientSize.Width / 2 - mw / 2;
+            int mw = 210, mx = ClientSize.Width / 2 - mw / 2;
             DrawMeterBar(g, mx, 14, mw, "CORRELATION", corr,
                          corr < 0 ? Color.FromArgb(255, 120, 90) : Palette.ColorAt(_lut, 0.8), alpha);
             DrawMeterBar(g, mx, 44, mw, "BALANCE", bal, Palette.ColorAt(_lut, 0.65), alpha);
@@ -807,25 +585,23 @@ namespace NostalgiaPlus.Ui
         private void DrawMeterBar(Graphics g, int x, int y, int w, string label,
                                   double value, Color colour, double alpha)
         {
-            using (var track = new SolidBrush(Fade(Color.FromArgb(120, 40, 40, 46), alpha)))
+            using (var track = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(120, 40, 40, 46), alpha)))
                 g.FillRectangle(track, x, y + 9, w, 5);
-            using (var centre = new Pen(Fade(Color.FromArgb(90, 255, 255, 255), alpha)))
+            using (var centre = new Pen(StereoScope.FadeColor(Color.FromArgb(90, 255, 255, 255), alpha)))
                 g.DrawLine(centre, x + w / 2, y + 7, x + w / 2, y + 16);
 
             double t = (value + 1.0) / 2.0;
             if (t < 0) t = 0; else if (t > 1) t = 1;
             int px = x + (int)(t * w);
-
             int from = Math.Min(px, x + w / 2);
             int width = Math.Abs(px - (x + w / 2));
-            using (var fill = new SolidBrush(Fade(Color.FromArgb(210, colour), alpha)))
+            using (var fill = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(210, colour), alpha)))
                 g.FillRectangle(fill, from, y + 9, Math.Max(1, width), 5);
-            using (var knob = new SolidBrush(Fade(Color.FromArgb(255, 250, 250, 252), alpha)))
+            using (var knob = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(255, 250, 250, 252), alpha)))
                 g.FillRectangle(knob, px - 1, y + 6, 2, 11);
-
-            using (var lbl = new SolidBrush(Fade(Color.FromArgb(140, 190, 190, 200), alpha)))
+            using (var lbl = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(140, 190, 190, 200), alpha)))
                 g.DrawString(label, _fontTiny, lbl, x, y - 4);
-            using (var val = new SolidBrush(Fade(Color.FromArgb(220, 240, 240, 245), alpha)))
+            using (var val = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(220, 240, 240, 245), alpha)))
             {
                 string s = value.ToString("+0.00;-0.00; 0.00");
                 SizeF sz = g.MeasureString(s, _fontTiny);
@@ -837,14 +613,14 @@ namespace NostalgiaPlus.Ui
         {
             if (DateTime.UtcNow > _hintUntil) return;
             string text = (_settings.FsImmersive ? "IMMERSIVE   " : "") +
-                          "Right-click for options    I immersive    Esc exit    Space freeze    " +
-                          "W waveform    O overlays    G grid    P palette    " +
-                          _analyzer.DescribeResolution() + "    " + _fps.ToString("0") + " fps  " +
-                          _analysisMs.ToString("0.0") + " ms dsp  " +
+                          "Click a button to cycle it    Right-click for all options    " +
+                          "I immersive    Esc exit    Space freeze    " +
+                          _scope.Analyzer.DescribeResolution() + "    " +
+                          _fps.ToString("0") + " fps  " + _analysisMs.ToString("0.0") + " ms dsp  " +
                           _paintMs.ToString("0.0") + " ms paint";
             SizeF sz = g.MeasureString(text, _fontSmall);
             float x = (ClientSize.Width - sz.Width) / 2;
-            float y = ClientSize.Height - sz.Height - 18;
+            float y = 92;
             using (var back = new SolidBrush(Color.FromArgb(200, 8, 8, 10)))
                 g.FillRectangle(back, x - 12, y - 6, sz.Width + 24, sz.Height + 12);
             using (var b = new SolidBrush(Color.FromArgb(225, 235, 235, 240)))
@@ -856,7 +632,23 @@ namespace NostalgiaPlus.Ui
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            _mouseX = e.X; _mouseY = e.Y; _mouseIn = true;
             Touch();
+        }
+
+        protected override void OnMouseLeave(EventArgs e)
+        {
+            base.OnMouseLeave(e);
+            _mouseIn = false;
+        }
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            Touch();
+            if (e.Button != MouseButtons.Left) return;
+            for (int i = 0; i < _buttons.Count; i++)
+                if (_buttons[i].Rect.Contains(e.Location)) { _buttons[i].Cycle(); return; }
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -865,14 +657,9 @@ namespace NostalgiaPlus.Ui
             switch (keyData)
             {
                 case Keys.Escape:
-                case Keys.F11:
-                    Close();
-                    return true;
-                case Keys.Space:
-                    _frozen = !_frozen; Invalidate(); return true;
-                case Keys.I:
-                    ToggleImmersive();
-                    return true;
+                case Keys.F11: Close(); return true;
+                case Keys.Space: _frozen = !_frozen; Invalidate(); return true;
+                case Keys.I: ToggleImmersive(); return true;
                 case Keys.W:
                     _settings.FsShowWaveform = !_settings.FsShowWaveform;
                     OnSettingsChanged(true); return true;
@@ -882,23 +669,29 @@ namespace NostalgiaPlus.Ui
                 case Keys.G:
                     _settings.FsShowGrid = !_settings.FsShowGrid;
                     OnSettingsChanged(false); return true;
+                case Keys.B:
+                    _settings.Style = Next(_settings.Style);
+                    OnSettingsChanged(false); return true;
+                case Keys.C:
+                    _settings.PairMode = Next(_settings.PairMode);
+                    OnSettingsChanged(true); return true;
+                case Keys.M:
+                    _settings.MirrorLeftPane = !_settings.MirrorLeftPane;
+                    OnSettingsChanged(true); return true;
                 case Keys.P:
-                    {
-                        var vals = (PaletteKind[])Enum.GetValues(typeof(PaletteKind));
-                        int i = Array.IndexOf(vals, _settings.Palette);
-                        _settings.Palette = vals[(i + 1) % vals.Length];
-                        OnSettingsChanged(false);
-                        _hintUntil = DateTime.UtcNow.AddSeconds(1.5);
-                        return true;
-                    }
+                    _settings.Palette = Next(_settings.Palette);
+                    _settings.Preset = Preset.Custom;
+                    OnSettingsChanged(false);
+                    _hintUntil = DateTime.UtcNow.AddSeconds(1.5);
+                    return true;
             }
             return base.ProcessCmdKey(ref msg, keyData);
         }
 
         /// <summary>
-        /// Entering immersive mode also applies the Immersive preset, because the visual
-        /// treatment cannot rescue a linear axis at the lowest resolution - that
-        /// combination is what makes dense music render as an undifferentiated wall.
+        /// Entering immersive mode also applies the Immersive preset: the visual treatment
+        /// cannot rescue a linear axis at the lowest resolution, which is what makes dense
+        /// music render as an undifferentiated wall.
         /// </summary>
         public void ToggleImmersive()
         {
@@ -907,10 +700,7 @@ namespace NostalgiaPlus.Ui
                 _settings.FsImmersive = false;
                 _settings.Preset = Preset.Custom;
             }
-            else
-            {
-                _settings.ApplyPreset(Preset.Immersive);
-            }
+            else _settings.ApplyPreset(Preset.Immersive);
             _hintUntil = DateTime.UtcNow.AddSeconds(3);
             OnSettingsChanged(true);
         }
