@@ -434,8 +434,13 @@ namespace NostalgiaPlus.Render
                     // Park the channel label at the past end - the oldest edge, opposite
                     // the curve - so it never sits on top of the live incoming column.
                     float x = _panes[i].CurveOnLeft ? sr.Right - sz.Width - 8 : sr.Left + 5;
-                    g.FillRectangle(back, x - 3, sr.Top + 3 + yOffset, sz.Width + 6, sz.Height);
-                    g.DrawString(t, font, brush, x, sr.Top + 2 + yOffset);
+                    // One line lower than the top of the pane, because every edge a
+                    // channel label can sit against has an axis column beside it - the
+                    // gutter inside, the margins outside - and level with the first
+                    // number "20k  L" reads as one label rather than two.
+                    float y = sr.Top + 3 + yOffset + sz.Height + 4;
+                    g.FillRectangle(back, x - 3, y, sz.Width + 6, sz.Height);
+                    g.DrawString(t, font, brush, x, y - 1);
                 }
         }
 
@@ -469,8 +474,17 @@ namespace NostalgiaPlus.Render
                                           List<string> labels, List<string> subLabels,
                                           AxisLabelMode mode, List<bool> major, int axisPixels)
         {
-            // Two-line labels need room for two lines, or consecutive ones touch.
-            double TargetSpacing = mode == AxisLabelMode.Both ? 46.0 : 30.0;
+            // Spacing scales with the axis rather than being fixed.
+            //
+            // A flat 30px target suited the docked strip and made a 1080p axis carry 22
+            // numbers 40px apart, which stops reading as a scale and starts reading as a
+            // wall of digits competing with the image. Proportional gives the docked
+            // panel the same density it had and roughly halves it on a full screen -
+            // the gridlines are all still drawn, so nothing is lost from the picture,
+            // only from the numbering of it.
+            double TargetSpacing = axisPixels <= 0 ? 30.0
+                                 : Math.Max(30.0, Math.Min(64.0, axisPixels / 18.0));
+            if (mode == AxisLabelMode.Both) TargetSpacing *= 1.5;   // two lines, two lines' room
 
             if (map.Scale == FreqScale.Linear)
             {
