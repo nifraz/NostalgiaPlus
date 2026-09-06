@@ -1,0 +1,9 @@
+# Build output
+bin/
+obj/
+
+# Editor and scratch files
+*.bak
+*.bak2
+*.user
+*.suo
