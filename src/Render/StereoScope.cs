@@ -147,13 +147,14 @@ namespace NostalgiaPlus.Render
             return true;
         }
 
-        public void DrawPanes(Graphics g, Settings s, bool glow, Font labelFont, double alpha)
+        public void DrawPanes(Graphics g, Settings s, bool glow, Font labelFont, double alpha, int topInset)
         {
             var o = new CurveDrawOptions();
             o.Style = s.Style; o.BarSize = s.BarSize; o.LedSegment = s.LedSegment;
             o.ShowMax = s.ShowMax; o.ShowMin = s.ShowMin; o.ShowAvg = s.ShowAvg;
             o.SolidFill = s.SolidFill; o.Background = s.Background;
             o.ShowDbScale = s.ShowDbScale; o.LabelFont = labelFont; o.Alpha = alpha;
+            o.TopInset = topInset;
 
             double rowsPerSecond = (double)s.TargetFps / Math.Max(1, s.ScrollDivider);
 
@@ -161,7 +162,7 @@ namespace NostalgiaPlus.Render
             {
                 _panes[i].DrawSpectrogram(g, _lut, glow);
                 if (s.ShowTimeMarks && alpha > 0.004)
-                    _panes[i].DrawTimeMarks(g, labelFont, rowsPerSecond, alpha);
+                    _panes[i].DrawTimeMarks(g, labelFont, rowsPerSecond, alpha, topInset);
                 _panes[i].DrawCurve(g, _lut, FloorDb, CeilingDb, o);
             }
         }
@@ -233,8 +234,11 @@ namespace NostalgiaPlus.Render
                     Rectangle sr = _panes[i].SpectroRect;
                     string t = _panes[i].Label;
                     SizeF sz = g.MeasureString(t, font);
-                    g.FillRectangle(back, sr.Left + 3, sr.Top + 3 + yOffset, sz.Width + 6, sz.Height);
-                    g.DrawString(t, font, brush, sr.Left + 5, sr.Top + 2 + yOffset);
+                    // Park the channel label at the past end - the oldest edge, opposite
+                    // the curve - so it never sits on top of the live incoming column.
+                    float x = _panes[i].CurveOnLeft ? sr.Right - sz.Width - 8 : sr.Left + 5;
+                    g.FillRectangle(back, x - 3, sr.Top + 3 + yOffset, sz.Width + 6, sz.Height);
+                    g.DrawString(t, font, brush, x, sr.Top + 2 + yOffset);
                 }
         }
 

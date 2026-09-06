@@ -247,7 +247,8 @@ namespace NostalgiaPlus.Ui
 
             lock (_gate)
             {
-                _scope.DrawPanes(g, _settings, false, _fontSmall, 1.0);
+                _scope.DrawPanes(g, _settings, false, _fontSmall, 1.0,
+                                 _settings.ShowStatus ? 14 : 0);
                 if (_settings.ShowGrid) _scope.DrawGrid(g, _settings, _fontSmall, 1.0, _settings.ShowStatus ? 16 : 0);
                 // Keep the channel labels clear of the status line.
                 if (_settings.ShowLabels) _scope.DrawPaneLabels(g, _fontSmall, 1.0, _settings.ShowStatus ? 14 : 0);

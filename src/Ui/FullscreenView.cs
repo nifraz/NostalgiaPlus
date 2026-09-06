@@ -446,7 +446,8 @@ namespace NostalgiaPlus.Ui
             bool glow = _settings.FsImmersive && _settings.FsGlow;
             lock (_gate)
             {
-                _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture);
+                _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture,
+                                 _settings.FsShowOverlays ? 84 : 0);
                 if (_settings.FsShowGrid && furniture > 0.004)
                     _scope.DrawGrid(g, _settings, _fontTiny, furniture,
                                     _settings.FsShowOverlays ? 84 : 0);

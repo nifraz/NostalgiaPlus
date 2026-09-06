@@ -24,6 +24,8 @@ namespace NostalgiaPlus.Render
         public bool ShowDbScale = true;
         public Font LabelFont;
         public double Alpha = 1.0;
+        /// <summary>Pixels to drop scales by so they clear a status line or overlay bar.</summary>
+        public int TopInset;
     }
 
     /// <summary>
@@ -279,7 +281,7 @@ namespace NostalgiaPlus.Render
             bool labels = o.ShowDbScale && o.LabelFont != null && CurveRect.Width >= 58;
 
             using (var pen = new Pen(Color.FromArgb((int)(34 * o.Alpha), 255, 255, 255)))
-            using (var brush = new SolidBrush(Color.FromArgb((int)(130 * o.Alpha), 215, 215, 222)))
+            using (var brush = new SolidBrush(Color.FromArgb((int)(215 * o.Alpha), 235, 235, 242)))
             {
                 for (double d = Math.Ceiling(floorDb / step) * step; d <= ceilDb; d += step)
                 {
@@ -288,12 +290,17 @@ namespace NostalgiaPlus.Render
                     g.DrawLine(pen, x, CurveRect.Top, x, CurveRect.Bottom);
                     if (labels)
                     {
+                        // The high-frequency end is the quiet end of most material, so
+                        // the scale sits there rather than competing with the bass.
                         string t = d.ToString("0");
                         SizeF sz = g.MeasureString(t, o.LabelFont);
                         float lx = x - sz.Width / 2;
                         if (lx < CurveRect.Left) lx = CurveRect.Left;
                         if (lx + sz.Width > CurveRect.Right) lx = CurveRect.Right - sz.Width;
-                        g.DrawString(t, o.LabelFont, brush, lx, CurveRect.Bottom - sz.Height - 1);
+                        float ly = CurveRect.Top + 3 + o.TopInset;
+                        using (var chip = new SolidBrush(Color.FromArgb((int)(170 * o.Alpha), 8, 8, 11)))
+                            g.FillRectangle(chip, lx - 2, ly - 1, sz.Width + 4, sz.Height + 1);
+                        g.DrawString(t, o.LabelFont, brush, lx, ly);
                     }
                 }
 
@@ -313,7 +320,7 @@ namespace NostalgiaPlus.Render
         /// Time ticks along the spectrogram. Age runs away from the curve, so under
         /// Mirror the two panes count outward in opposite directions.
         /// </summary>
-        public void DrawTimeMarks(Graphics g, Font font, double rowsPerSecond, double alpha)
+        public void DrawTimeMarks(Graphics g, Font font, double rowsPerSecond, double alpha, int topInset)
         {
             if (rowsPerSecond <= 0 || SpectroRect.Width < 40 || font == null) return;
             double visible = SpectroRect.Width / rowsPerSecond;
@@ -326,7 +333,8 @@ namespace NostalgiaPlus.Render
             }
 
             using (var pen = new Pen(Color.FromArgb((int)(30 * alpha), 255, 255, 255)))
-            using (var brush = new SolidBrush(Color.FromArgb((int)(120 * alpha), 215, 215, 222)))
+            using (var brush = new SolidBrush(Color.FromArgb((int)(215 * alpha), 235, 235, 242)))
+            using (var chip = new SolidBrush(Color.FromArgb((int)(170 * alpha), 8, 8, 11)))
                 for (double t = step; t < visible; t += step)
                 {
                     int off = (int)(t * rowsPerSecond);
@@ -335,7 +343,12 @@ namespace NostalgiaPlus.Render
                     g.DrawLine(pen, x, SpectroRect.Top, x, SpectroRect.Bottom);
                     string label = "-" + t.ToString("0") + "s";
                     SizeF sz = g.MeasureString(label, font);
-                    g.DrawString(label, font, brush, x - sz.Width / 2, SpectroRect.Bottom - sz.Height - 2);
+                    float lx = x - sz.Width / 2;
+                    if (lx < SpectroRect.Left) lx = SpectroRect.Left;
+                    if (lx + sz.Width > SpectroRect.Right) lx = SpectroRect.Right - sz.Width;
+                    float ly = SpectroRect.Top + 3 + topInset;
+                    g.FillRectangle(chip, lx - 2, ly - 1, sz.Width + 4, sz.Height + 1);
+                    g.DrawString(label, font, brush, lx, ly);
                 }
         }
 
