@@ -186,7 +186,9 @@ namespace NostalgiaPlus.Render
             var freqs = new List<double>();
             var labels = new List<string>();
             var subLabels = new List<string>();
-            BuildGridLines(_map, freqs, labels, subLabels, s.LabelMode);
+            var major = new List<bool>();
+            int axisPixels = _panes[0].SpectroRect.Height;
+            BuildGridLines(_map, freqs, labels, subLabels, s.LabelMode, major, axisPixels);
             bool showLabels = s.ShowAxisLabels;
 
             int h = _panes[0].SpectroRect.Height;
@@ -200,7 +202,7 @@ namespace NostalgiaPlus.Render
             if (s.ShowSemitones && _map.Scale != FreqScale.Linear)
             {
                 double pxPerOctave = h / Math.Log(_map.FMax / _map.FMin, 2.0);
-                if (pxPerOctave > 96)
+                if (pxPerOctave > 96 && freqs.Count < 40)
                     using (var fine = new Pen(FadeColor(Color.FromArgb(16, 255, 255, 255), alpha)))
                         for (int midi = 12; midi <= 132; midi++)
                         {
@@ -214,47 +216,51 @@ namespace NostalgiaPlus.Render
             }
 
             using (var pen = new Pen(FadeColor(Color.FromArgb(38, 255, 255, 255), alpha)))
+            using (var minorPen = new Pen(FadeColor(Color.FromArgb(20, 255, 255, 255), alpha)))
             using (var brush = new SolidBrush(FadeColor(Color.FromArgb(185, 232, 232, 238), alpha)))
+            using (var minorBrush = new SolidBrush(FadeColor(Color.FromArgb(120, 210, 210, 220), alpha)))
             {
                 for (int i = 0; i < freqs.Count; i++)
                 {
                     int y = top + h - 1 - (int)Math.Round(_map.FreqToX(freqs[i]));
                     if (y < top || y >= top + h) continue;
-                    g.DrawLine(pen, Bounds.Left, y, Bounds.Right, y);
+                    bool isMajor = i >= major.Count || major[i];
+                    g.DrawLine(isMajor ? pen : minorPen, Bounds.Left, y, Bounds.Right, y);
 
                     if (!showLabels) continue;
                     if (y < labelFloorY) continue;   // keep clear of the top overlay bar
 
                     string primary = labels[i];
                     string secondary = subLabels[i];
+                    SolidBrush ink = isMajor ? brush : minorBrush;
                     SizeF sz = g.MeasureString(primary, labelFont);
                     float lineH = sz.Height - 2;
 
                     if (GutterRect.Width >= 22)
                     {
-                        g.DrawString(primary, labelFont, brush,
+                        g.DrawString(primary, labelFont, ink,
                                      GutterRect.Left + (GutterRect.Width - sz.Width) / 2, y - 13);
                         if (secondary != null)
                         {
                             SizeF s2 = g.MeasureString(secondary, labelFont);
-                            g.DrawString(secondary, labelFont, brush,
+                            g.DrawString(secondary, labelFont, ink,
                                          GutterRect.Left + (GutterRect.Width - s2.Width) / 2,
                                          y - 13 + lineH);
                         }
                     }
                     if (OuterLeftRect.Width > 0)
                     {
-                        g.DrawString(primary, labelFont, brush,
+                        g.DrawString(primary, labelFont, ink,
                                      OuterLeftRect.Left + (OuterLeftRect.Width - sz.Width) / 2, y - 13);
-                        g.DrawString(primary, labelFont, brush,
+                        g.DrawString(primary, labelFont, ink,
                                      OuterRightRect.Left + (OuterRightRect.Width - sz.Width) / 2, y - 13);
                         if (secondary != null)
                         {
                             SizeF s2 = g.MeasureString(secondary, labelFont);
-                            g.DrawString(secondary, labelFont, brush,
+                            g.DrawString(secondary, labelFont, ink,
                                          OuterLeftRect.Left + (OuterLeftRect.Width - s2.Width) / 2,
                                          y - 13 + lineH);
-                            g.DrawString(secondary, labelFont, brush,
+                            g.DrawString(secondary, labelFont, ink,
                                          OuterRightRect.Left + (OuterRightRect.Width - s2.Width) / 2,
                                          y - 13 + lineH);
                         }
@@ -294,23 +300,70 @@ namespace NostalgiaPlus.Render
                                           List<string> labels, List<string> subLabels,
                                           AxisLabelMode mode)
         {
+            BuildGridLines(map, freqs, labels, subLabels, mode, null, 0);
+        }
+
+        /// <summary>
+        /// Gridline frequencies and their labels, at a density that suits the space.
+        ///
+        /// A fixed one-label-per-octave wastes a 1080px fullscreen axis and crowds a
+        /// short docked strip equally badly. The step is chosen so labels land roughly
+        /// 30px apart, subdividing the octave musically - octave, tritone, major third,
+        /// minor third, whole tone, semitone - rather than at arbitrary intervals.
+        /// <paramref name="major"/> receives whether each line is an octave, so octaves
+        /// can still be drawn more strongly than the subdivisions between them.
+        /// </summary>
+        public static void BuildGridLines(FrequencyMap map, List<double> freqs,
+                                          List<string> labels, List<string> subLabels,
+                                          AxisLabelMode mode, List<bool> major, int axisPixels)
+        {
+            const double TargetSpacing = 30.0;
+
             if (map.Scale == FreqScale.Linear)
             {
-                for (double f = 2000; f <= map.FMax; f += 2000)
+                double[] steps = { 500, 1000, 2000, 5000, 10000 };
+                double step = steps[steps.Length - 1];
+                for (int i = 0; i < steps.Length; i++)
                 {
+                    double px = axisPixels <= 0 ? 0 : axisPixels * steps[i] / Math.Max(1, map.FMax - map.FMin);
+                    if (axisPixels <= 0) { step = 2000; break; }
+                    if (px >= TargetSpacing) { step = steps[i]; break; }
+                }
+                for (double f = step; f <= map.FMax; f += step)
+                {
+                    if (f < map.FMin) continue;
                     freqs.Add(f);
                     labels.Add(FormatShortHz(f));
                     if (subLabels != null) subLabels.Add(null);
+                    if (major != null) major.Add(Math.Abs(f % (step * 5)) < 1);
                 }
                 return;
             }
 
-            for (int midi = 12; midi <= 132; midi += 12)
+            double octaves = Math.Log(map.FMax / map.FMin, 2.0);
+            double pxPerOctave = (axisPixels <= 0 || octaves <= 0) ? 0 : axisPixels / octaves;
+            int[] semitoneSteps = { 12, 6, 4, 3, 2, 1 };
+            int stepSemis = 12;
+            // Walk from the finest subdivision upward and stop at the first that fits;
+            // without the break this kept overwriting with coarser steps and always
+            // settled on whole octaves.
+            if (pxPerOctave > 0)
+                for (int i = semitoneSteps.Length - 1; i >= 0; i--)
+                    if (pxPerOctave * semitoneSteps[i] / 12.0 >= TargetSpacing)
+                    {
+                        stepSemis = semitoneSteps[i];
+                        break;
+                    }
+
+            string[] names = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
+            for (int midi = 12; midi <= 132; midi += stepSemis)
             {
                 double f = FrequencyMap.MidiToFreq(midi);
                 if (f < map.FMin || f > map.FMax) continue;
-                string note = "C" + ((midi / 12) - 1);
+                bool isOctave = (midi % 12) == 0;
+                string note = names[midi % 12] + ((midi / 12) - 1);
                 freqs.Add(f);
+                if (major != null) major.Add(isOctave);
                 if (mode == AxisLabelMode.Frequency)
                 {
                     labels.Add(FormatShortHz(f));

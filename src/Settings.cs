@@ -7,7 +7,13 @@ using NostalgiaPlus.Render;
 
 namespace NostalgiaPlus
 {
-    public enum Preset { Nostalgia, Studio, QC, Immersive, Custom }
+    // Values pinned and new members appended, so adding one never changes what an
+    // existing number means.
+    public enum Preset
+    {
+        Nostalgia = 0, Studio = 1, QC = 2, Immersive = 3, Custom = 4,
+        Vocal = 5, Bass = 6, Percussion = 7, Mastering = 8
+    }
 
     /// <summary>What the frequency axis prints at each gridline.</summary>
     public enum AxisLabelMode { Notes, Frequency, Both }
@@ -166,6 +172,62 @@ namespace NostalgiaPlus
                     FsAutoHide = true;
                     FsShowWaveform = true;
                     FsShowOverlays = true;
+                    break;
+
+                case Preset.Vocal:
+                    // Where voices live, with enough resolution to separate formants.
+                    Palette = PaletteKind.Magma;
+                    Scale = FreqScale.Note;
+                    FMin = 150; FMax = 9000;
+                    Quality = AnalysisQuality.Balanced;
+                    TiltDbPerOctave = 1.5;
+                    Aggregate = BandAggregate.Peak;
+                    AdaptiveRange = true; Contrast = 0.45;
+                    ScrollDivider = 2;
+                    FsImmersive = false;
+                    break;
+
+                case Preset.Bass:
+                    // A narrow low range needs the largest transforms to resolve at all:
+                    // a semitone at E1 is 2.4 Hz wide.
+                    Palette = PaletteKind.Inferno;
+                    Scale = FreqScale.Note;
+                    FMin = 20; FMax = 800;
+                    Quality = AnalysisQuality.High;
+                    TiltDbPerOctave = 0.0;
+                    Aggregate = BandAggregate.Peak;
+                    AdaptiveRange = true; Contrast = 0.35;
+                    ScrollDivider = 2;
+                    FsImmersive = false;
+                    break;
+
+                case Preset.Percussion:
+                    // Transients are about timing, so latency and scroll speed matter
+                    // more than frequency detail.
+                    Palette = PaletteKind.Turbo;
+                    Scale = FreqScale.Note;
+                    FMin = 40; FMax = 18000;
+                    Quality = AnalysisQuality.LowLatency;
+                    TiltDbPerOctave = 3.0;
+                    Aggregate = BandAggregate.Peak;
+                    AdaptiveRange = true; Contrast = 0.60;
+                    ScrollDivider = 1;
+                    FsImmersive = false;
+                    break;
+
+                case Preset.Mastering:
+                    // Measurement rather than viewing: nothing tilted, nothing adaptive,
+                    // energy summed so noise floors read at their true level.
+                    Palette = PaletteKind.Viridis;
+                    Scale = FreqScale.Linear;
+                    FMin = 0; FMax = 22050;
+                    Quality = AnalysisQuality.High;
+                    TiltDbPerOctave = 0.0;
+                    Aggregate = BandAggregate.Energy;
+                    AdaptiveRange = false;
+                    FloorDb = -120; CeilingDb = 0;
+                    ScrollDivider = 2;
+                    FsImmersive = false;
                     break;
 
                 default: // Studio

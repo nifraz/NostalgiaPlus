@@ -80,11 +80,16 @@ namespace NostalgiaPlus.Ui
         private static ToolStripMenuItem Presets(Settings s, Options o)
         {
             var m = new ToolStripMenuItem("Preset");
-            foreach (Preset p in Enum.GetValues(typeof(Preset)))
+            // Explicit order: general purpose first, then focused, then measurement.
+            // Immersive is reached through View, which applies this same preset; listing
+            // it here as well made it look like two different things.
+            Preset[] order = {
+                Preset.Studio, Preset.Nostalgia,
+                Preset.Vocal, Preset.Bass, Preset.Percussion,
+                Preset.QC, Preset.Mastering
+            };
+            foreach (Preset p in order)
             {
-                // Immersive is reached through View, which applies this same preset;
-                // listing it here as well made it look like two different things.
-                if (p == Preset.Custom || p == Preset.Immersive) continue;
                 Preset captured = p;
                 var mi = new ToolStripMenuItem(p.ToString());
                 mi.Checked = s.Preset == p;

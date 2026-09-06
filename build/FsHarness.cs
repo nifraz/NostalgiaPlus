@@ -73,7 +73,7 @@ class FsHarness
     {
         if (Flag("noglow")) s.FsGlow = false;
         if (Flag("nowave")) s.FsShowWaveform = false;
-        if (Flag("nogrid")) s.FsShowGrid = false;
+        if (Flag("nogrid")) s.ShowGrid = false;
         if (Flag("nooverlay")) s.FsShowOverlays = false;
         if (Flag("nohover")) s.ShowHud = false;
         if (Flag("notrace")) { s.ShowMax = false; s.ShowMin = false; s.ShowAvg = false; }
@@ -129,9 +129,9 @@ class FsHarness
         settings.MirrorLeftPane = true;   // verify the new centre-out arrangement
         settings.FsAutoHide = false;      // keep axes and readout visible for the capture
         settings.CurveWidthPct = 12;
-        settings.ShowHarmonics = true;
-        settings.LabelMode = AxisLabelMode.Both;   // widest label case
-        settings.LabelFontSize = 9f;
+        settings.ShowHarmonics = false;
+        settings.LabelMode = AxisLabelMode.Notes;
+        settings.LabelFontSize = 7f;
         ApplyFlags(settings);
 
         // Not started, so no WASAPI thread claims the endpoint - we own the ring.
