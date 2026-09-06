@@ -2,7 +2,11 @@ using System;
 
 namespace NostalgiaPlus.Dsp
 {
-    public enum AnalysisQuality { LowLatency, Fast, Balanced, High }
+    // Values are pinned: inserting a member ahead of the others shifts every
+    // later value, which silently changes the meaning of anything already compiled
+    // against them. Menu order is set explicitly instead of following declaration
+    // order, so presentation and numbering stay independent.
+    public enum AnalysisQuality { Fast = 0, Balanced = 1, High = 2, LowLatency = 3 }
     public enum BandAggregate { Peak, Energy }
 
     /// <summary>

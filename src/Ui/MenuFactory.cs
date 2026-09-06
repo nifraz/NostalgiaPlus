@@ -133,7 +133,12 @@ namespace NostalgiaPlus.Ui
             m.DropDownItems.Add(scale);
 
             var qual = new ToolStripMenuItem("Resolution");
-            foreach (AnalysisQuality q in Enum.GetValues(typeof(AnalysisQuality)))
+            // Explicit order: fastest first, independent of the enum's pinned numbering.
+            AnalysisQuality[] order = {
+                AnalysisQuality.LowLatency, AnalysisQuality.Fast,
+                AnalysisQuality.Balanced, AnalysisQuality.High
+            };
+            foreach (AnalysisQuality q in order)
             {
                 AnalysisQuality captured = q;
                 string label = q == AnalysisQuality.LowLatency ? "Low latency (4K/1K/256)"
