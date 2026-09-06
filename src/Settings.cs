@@ -9,6 +9,9 @@ namespace NostalgiaPlus
 {
     public enum Preset { Nostalgia, Studio, QC, Immersive, Custom }
 
+    /// <summary>What the frequency axis prints at each gridline.</summary>
+    public enum AxisLabelMode { Notes, Frequency, Both }
+
     /// <summary>Returns {title, artist, album}; any element may be null or empty.</summary>
     public delegate string[] NowPlayingProvider();
 
@@ -72,6 +75,11 @@ namespace NostalgiaPlus
         public bool ShowTimeMarks = true;
         public bool ShowSemitones = true;
         public bool ShowOuterLabels = true;
+        /// <summary>Master switch for frequency axis labels in the gutter and at the edges.</summary>
+        public bool ShowAxisLabels = true;
+        public AxisLabelMode LabelMode = AxisLabelMode.Notes;
+        /// <summary>Point size for axis, scale and readout text.</summary>
+        public float LabelFontSize = 7f;
         /// <summary>Draw the hover line across both panes and read out both channels.</summary>
         public bool SyncHover = true;
         /// <summary>Stamp the hovered frequency onto the frequency axis itself.</summary>
@@ -242,6 +250,9 @@ namespace NostalgiaPlus
                 s.ShowTimeMarks = ParseBool(map, "ShowTimeMarks", s.ShowTimeMarks);
                 s.ShowSemitones = ParseBool(map, "ShowSemitones", s.ShowSemitones);
                 s.ShowOuterLabels = ParseBool(map, "ShowOuterLabels", s.ShowOuterLabels);
+                s.ShowAxisLabels = ParseBool(map, "ShowAxisLabels", s.ShowAxisLabels);
+                s.LabelMode = ParseEnum(map, "LabelMode", s.LabelMode);
+                s.LabelFontSize = (float)ParseDouble(map, "LabelFontSize", s.LabelFontSize);
                 s.SyncHover = ParseBool(map, "SyncHover", s.SyncHover);
                 s.ShowHoverPin = ParseBool(map, "ShowHoverPin", s.ShowHoverPin);
                 s.ShowHarmonics = ParseBool(map, "ShowHarmonics", s.ShowHarmonics);
@@ -314,6 +325,9 @@ namespace NostalgiaPlus
                 sb.AppendLine("ShowTimeMarks=" + ShowTimeMarks);
                 sb.AppendLine("ShowSemitones=" + ShowSemitones);
                 sb.AppendLine("ShowOuterLabels=" + ShowOuterLabels);
+                sb.AppendLine("ShowAxisLabels=" + ShowAxisLabels);
+                sb.AppendLine("LabelMode=" + LabelMode);
+                sb.AppendLine("LabelFontSize=" + Inv(LabelFontSize));
                 sb.AppendLine("SyncHover=" + SyncHover);
                 sb.AppendLine("ShowHoverPin=" + ShowHoverPin);
                 sb.AppendLine("ShowHarmonics=" + ShowHarmonics);

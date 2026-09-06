@@ -346,8 +346,36 @@ namespace NostalgiaPlus.Ui
                       delegate { s.ShowDbScale = !s.ShowDbScale; o.Changed(false); });
             AddToggle(m.DropDownItems, "Time markers on spectrograms", s.ShowTimeMarks,
                       delegate { s.ShowTimeMarks = !s.ShowTimeMarks; o.Changed(false); });
-            AddToggle(m.DropDownItems, "Note labels at outer edges", s.ShowOuterLabels,
+            AddToggle(m.DropDownItems, "Axis labels", s.ShowAxisLabels,
+                      delegate { s.ShowAxisLabels = !s.ShowAxisLabels; o.Changed(true); });
+            AddToggle(m.DropDownItems, "Repeat labels at outer edges", s.ShowOuterLabels,
                       delegate { s.ShowOuterLabels = !s.ShowOuterLabels; o.Changed(true); });
+
+            var content = new ToolStripMenuItem("Label values");
+            string[] cnames = { "Note names", "Frequency", "Both" };
+            var cvals = (AxisLabelMode[])Enum.GetValues(typeof(AxisLabelMode));
+            for (int i = 0; i < cvals.Length; i++)
+            {
+                AxisLabelMode captured = cvals[i];
+                var mi = new ToolStripMenuItem(cnames[i]);
+                mi.Checked = s.LabelMode == captured;
+                mi.Click += delegate { s.LabelMode = captured; o.Changed(true); };
+                content.DropDownItems.Add(mi);
+            }
+            m.DropDownItems.Add(content);
+
+            var fonts = new ToolStripMenuItem("Text size");
+            float[] sizes = { 6f, 7f, 8f, 9f, 11f, 13f };
+            string[] fnames = { "Tiny", "Small", "Normal", "Large", "Larger", "Largest" };
+            for (int i = 0; i < sizes.Length; i++)
+            {
+                float captured = sizes[i];
+                var mi = new ToolStripMenuItem(fnames[i] + "   (" + sizes[i].ToString("0") + " pt)");
+                mi.Checked = Math.Abs(s.LabelFontSize - sizes[i]) < 0.01f;
+                mi.Click += delegate { s.LabelFontSize = captured; o.Changed(true); };
+                fonts.DropDownItems.Add(mi);
+            }
+            m.DropDownItems.Add(fonts);
             AddToggle(m.DropDownItems, "Channel labels", s.ShowLabels,
                       delegate { s.ShowLabels = !s.ShowLabels; o.Changed(false); });
 

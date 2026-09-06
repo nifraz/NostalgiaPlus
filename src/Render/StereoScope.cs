@@ -59,7 +59,9 @@ namespace NostalgiaPlus.Render
 
             // Repeating the axis at both screen edges means the labels need their own
             // space; overlaying them on the graph fill is unreadable at these widths.
-            int margin = (s.ShowOuterLabels && bounds.Width > 6 * AxisMargin) ? AxisMargin : 0;
+            int wanted = AxisMargin + (int)Math.Max(0, (s.LabelFontSize - 7f) * 3);
+            int margin = (s.ShowOuterLabels && s.ShowAxisLabels && bounds.Width > 6 * wanted)
+                       ? wanted : 0;
             OuterLeftRect = new Rectangle(bounds.X, bounds.Y, margin, bounds.Height);
             OuterRightRect = new Rectangle(bounds.Right - margin, bounds.Y, margin, bounds.Height);
             bounds = new Rectangle(bounds.X + margin, bounds.Y,
@@ -183,7 +185,9 @@ namespace NostalgiaPlus.Render
             if (_map == null || _panes.Length == 0) return;
             var freqs = new List<double>();
             var labels = new List<string>();
-            BuildGridLines(_map, freqs, labels);
+            var subLabels = new List<string>();
+            BuildGridLines(_map, freqs, labels, subLabels, s.LabelMode);
+            bool showLabels = s.ShowAxisLabels;
 
             int h = _panes[0].SpectroRect.Height;
             int top = Bounds.Y;
@@ -218,17 +222,42 @@ namespace NostalgiaPlus.Render
                     if (y < top || y >= top + h) continue;
                     g.DrawLine(pen, Bounds.Left, y, Bounds.Right, y);
 
+                    if (!showLabels) continue;
                     if (y < labelFloorY) continue;   // keep clear of the top overlay bar
-                    SizeF sz = g.MeasureString(labels[i], labelFont);
+
+                    string primary = labels[i];
+                    string secondary = subLabels[i];
+                    SizeF sz = g.MeasureString(primary, labelFont);
+                    float lineH = sz.Height - 2;
+
                     if (GutterRect.Width >= 22)
-                        g.DrawString(labels[i], labelFont, brush,
+                    {
+                        g.DrawString(primary, labelFont, brush,
                                      GutterRect.Left + (GutterRect.Width - sz.Width) / 2, y - 13);
+                        if (secondary != null)
+                        {
+                            SizeF s2 = g.MeasureString(secondary, labelFont);
+                            g.DrawString(secondary, labelFont, brush,
+                                         GutterRect.Left + (GutterRect.Width - s2.Width) / 2,
+                                         y - 13 + lineH);
+                        }
+                    }
                     if (OuterLeftRect.Width > 0)
                     {
-                        g.DrawString(labels[i], labelFont, brush,
+                        g.DrawString(primary, labelFont, brush,
                                      OuterLeftRect.Left + (OuterLeftRect.Width - sz.Width) / 2, y - 13);
-                        g.DrawString(labels[i], labelFont, brush,
+                        g.DrawString(primary, labelFont, brush,
                                      OuterRightRect.Left + (OuterRightRect.Width - sz.Width) / 2, y - 13);
+                        if (secondary != null)
+                        {
+                            SizeF s2 = g.MeasureString(secondary, labelFont);
+                            g.DrawString(secondary, labelFont, brush,
+                                         OuterLeftRect.Left + (OuterLeftRect.Width - s2.Width) / 2,
+                                         y - 13 + lineH);
+                            g.DrawString(secondary, labelFont, brush,
+                                         OuterRightRect.Left + (OuterRightRect.Width - s2.Width) / 2,
+                                         y - 13 + lineH);
+                        }
                     }
                 }
             }
@@ -254,20 +283,53 @@ namespace NostalgiaPlus.Render
 
         public static void BuildGridLines(FrequencyMap map, List<double> freqs, List<string> labels)
         {
+            BuildGridLines(map, freqs, labels, null, AxisLabelMode.Notes);
+        }
+
+        /// <summary>
+        /// Gridline frequencies plus their labels. A second line is filled in for the
+        /// Both mode rather than widening the label, so a narrow gutter still fits.
+        /// </summary>
+        public static void BuildGridLines(FrequencyMap map, List<double> freqs,
+                                          List<string> labels, List<string> subLabels,
+                                          AxisLabelMode mode)
+        {
             if (map.Scale == FreqScale.Linear)
             {
                 for (double f = 2000; f <= map.FMax; f += 2000)
-                { freqs.Add(f); labels.Add((f / 1000).ToString("0") + "k"); }
-            }
-            else
-            {
-                for (int midi = 12; midi <= 132; midi += 12)
                 {
-                    double f = FrequencyMap.MidiToFreq(midi);
-                    if (f < map.FMin || f > map.FMax) continue;
-                    freqs.Add(f); labels.Add("C" + ((midi / 12) - 1));
+                    freqs.Add(f);
+                    labels.Add(FormatShortHz(f));
+                    if (subLabels != null) subLabels.Add(null);
+                }
+                return;
+            }
+
+            for (int midi = 12; midi <= 132; midi += 12)
+            {
+                double f = FrequencyMap.MidiToFreq(midi);
+                if (f < map.FMin || f > map.FMax) continue;
+                string note = "C" + ((midi / 12) - 1);
+                freqs.Add(f);
+                if (mode == AxisLabelMode.Frequency)
+                {
+                    labels.Add(FormatShortHz(f));
+                    if (subLabels != null) subLabels.Add(null);
+                }
+                else
+                {
+                    labels.Add(note);
+                    if (subLabels != null)
+                        subLabels.Add(mode == AxisLabelMode.Both ? FormatShortHz(f) : null);
                 }
             }
+        }
+
+        private static string FormatShortHz(double f)
+        {
+            if (f >= 10000) return (f / 1000.0).ToString("0") + "k";
+            if (f >= 1000) return (f / 1000.0).ToString("0.0") + "k";
+            return f.ToString("0");
         }
 
         public static Color FadeColor(Color c, double a)
@@ -413,7 +475,9 @@ namespace NostalgiaPlus.Render
                         int hy = top + hgt - 1 - (int)Math.Round(_map.FreqToX(hf));
                         if (hy < top || hy >= top + hgt) continue;
                         g.DrawLine(hp, Bounds.Left, hy, Bounds.Right, hy);
-                        g.DrawString("x" + n, pinFont ?? font, hb, Bounds.Left + 4, hy - 12);
+                        // Sit inside the reserved axis margin rather than on top of it.
+                        float hx = OuterLeftRect.Width > 0 ? OuterLeftRect.Right + 4 : Bounds.Left + 4;
+                        g.DrawString("x" + n, pinFont ?? font, hb, hx, hy - 12);
                     }
             }
 

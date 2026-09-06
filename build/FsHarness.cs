@@ -130,6 +130,8 @@ class FsHarness
         settings.FsAutoHide = false;      // keep axes and readout visible for the capture
         settings.CurveWidthPct = 12;
         settings.ShowHarmonics = true;
+        settings.LabelMode = AxisLabelMode.Both;   // widest label case
+        settings.LabelFontSize = 9f;
         ApplyFlags(settings);
 
         // Not started, so no WASAPI thread claims the endpoint - we own the ring.

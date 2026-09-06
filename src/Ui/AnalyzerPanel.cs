@@ -63,8 +63,7 @@ namespace NostalgiaPlus.Ui
             SetStyle(ControlStyles.Selectable, true);
             TabStop = true;
             BackColor = Color.Black;
-            _font = new Font("Segoe UI", 8f);
-            _fontSmall = new Font("Segoe UI", 7f);
+            RebuildFonts();
             _lut = Palette.BuildLut(_settings.Palette);
             _scope.SetPalette(_lut);
 
@@ -88,8 +87,20 @@ namespace NostalgiaPlus.Ui
             ContextMenuStrip = menu;
         }
 
+        /// <summary>All text scales from one setting; see the fullscreen view.</summary>
+        private void RebuildFonts()
+        {
+            float b = _settings.LabelFontSize;
+            if (b < 5f) b = 5f; else if (b > 20f) b = 20f;
+            if (_font != null) _font.Dispose();
+            if (_fontSmall != null) _fontSmall.Dispose();
+            _fontSmall = new Font("Segoe UI", b);
+            _font = new Font("Segoe UI", b + 1.5f);
+        }
+
         private void OnSettingsChanged(bool rebuildGeometry)
         {
+            RebuildFonts();
             _lut = Palette.BuildLut(_settings.Palette);
             _scope.SetPalette(_lut);
             _scope.ResetRange();

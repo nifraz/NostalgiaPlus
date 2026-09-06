@@ -84,10 +84,7 @@ namespace NostalgiaPlus.Ui
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer |
                      ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
 
-            _fontBig = new Font("Segoe UI Light", 22f);
-            _fontMid = new Font("Segoe UI", 11f);
-            _fontSmall = new Font("Segoe UI", 8.5f);
-            _fontTiny = new Font("Segoe UI", 7.5f);
+            RebuildFonts();
             _lut = Palette.BuildLut(_settings.Palette);
             _scope.SetPalette(_lut);
             _hintUntil = DateTime.UtcNow.AddSeconds(4);
@@ -110,6 +107,24 @@ namespace NostalgiaPlus.Ui
                 });
             };
             ContextMenuStrip = menu;
+        }
+
+        /// <summary>
+        /// All text scales from one setting. Sizes are derived rather than independent so
+        /// the hierarchy - title, meters, readout, axis - stays intact at any size.
+        /// </summary>
+        private void RebuildFonts()
+        {
+            float b = _settings.LabelFontSize;
+            if (b < 5f) b = 5f; else if (b > 20f) b = 20f;
+            if (_fontBig != null) _fontBig.Dispose();
+            if (_fontMid != null) _fontMid.Dispose();
+            if (_fontSmall != null) _fontSmall.Dispose();
+            if (_fontTiny != null) _fontTiny.Dispose();
+            _fontBig = new Font("Segoe UI Light", b + 15f);
+            _fontMid = new Font("Segoe UI", b + 4f);
+            _fontSmall = new Font("Segoe UI", b + 1.5f);
+            _fontTiny = new Font("Segoe UI", b);
         }
 
         // ---------------- quick buttons ----------------
@@ -216,10 +231,11 @@ namespace NostalgiaPlus.Ui
 
         private void OnSettingsChanged(bool rebuildGeometry)
         {
+            RebuildFonts();
             _lut = Palette.BuildLut(_settings.Palette);
             _scope.SetPalette(_lut);
             lock (_gate) { _scope.ResetRange(); }
-            if (rebuildGeometry) RebuildGeometry();
+            RebuildGeometry();
             if (_storageDir != null) _settings.Save(_storageDir);
             Touch();
             Invalidate();
