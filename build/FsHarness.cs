@@ -19,6 +19,23 @@ class FsHarness
         return new string[] { "Maanaadu Theme", "Yuvan Shankar Raja", "Maanaadu (2021)" };
     }
 
+    // Stands in for MusicBee so the deck's transport, clock and seek bar can be seen
+    // offscreen. No artwork: the harness has none to give, which also exercises the
+    // deck's empty-artwork path.
+    static PlayerBridge Bridge()
+    {
+        var b = new PlayerBridge();
+        b.Info = Info;
+        b.Duration = delegate { return 254000; };
+        b.Position = delegate { return 71000; };
+        b.IsPlaying = delegate { return true; };
+        b.PlayPause = delegate { };
+        b.Next = delegate { };
+        b.Previous = delegate { };
+        b.Seek = delegate(int ms) { };
+        return b;
+    }
+
     // Distinct material per channel so the mirror is obviously doing something:
     // left carries a low chord plus kick, right carries a higher chord plus hats,
     // and a shared sweep crosses both.
@@ -137,7 +154,7 @@ class FsHarness
         // Not started, so no WASAPI thread claims the endpoint - we own the ring.
         var cap = new LoopbackCapture();
 
-        var view = new FullscreenView(settings, System.IO.Path.GetTempPath(), cap, Info);
+        var view = new FullscreenView(settings, System.IO.Path.GetTempPath(), cap, Bridge());
         view.ShowAt(new Rectangle(-9000, -9000, W, H), false);
 
         int hop = (int)(Sr / Fps);

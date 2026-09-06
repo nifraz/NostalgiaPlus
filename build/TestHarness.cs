@@ -1,6 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Drawing;
+using System.Reflection;
 using NostalgiaPlus;
 using NostalgiaPlus.Dsp;
+using NostalgiaPlus.Ui;
 
 class TestHarness
 {
@@ -17,6 +21,8 @@ class TestHarness
         TestDynamicRange();
         TestLoudness();
         TestUserPresets();
+        TestSettingsPersistence();
+        TestLayoutBudgets();
         Console.WriteLine(_fail == 0 ? "\nALL CHECKS PASSED" : "\n" + _fail + " CHECK(S) FAILED");
         Environment.Exit(_fail == 0 ? 0 : 1);
     }
@@ -250,6 +256,125 @@ class TestHarness
         Check("right-only signal reads hard right", m4.Balance > 0.98,
               m4.Balance.ToString("0.000"));
         Console.WriteLine();
+    }
+
+    /// <summary>
+    /// Every public setting has to survive a save and a load.
+    ///
+    /// Checking a handful by hand missed the real failure mode: adding a setting and
+    /// forgetting one of its two lines in Load/Save. That loses the value silently, and
+    /// only on the next restart - so it reads as "the plugin forgot my settings" rather
+    /// than as a bug in the line you just wrote. Reflection covers every field, so a
+    /// new setting is covered the moment it is declared.
+    /// </summary>
+    static void TestSettingsPersistence()
+    {
+        Console.WriteLine("[settings persistence]");
+        string dir = System.IO.Path.Combine(System.IO.Path.GetTempPath(),
+                                            "NostalgiaPlusTest_" + Guid.NewGuid().ToString("N"));
+        System.IO.Directory.CreateDirectory(dir);
+        try
+        {
+            FieldInfo[] fields = typeof(Settings).GetFields(BindingFlags.Public | BindingFlags.Instance);
+            var a = new Settings();
+            int mutated = 0;
+            foreach (FieldInfo f in fields)
+            {
+                object v = Mutate(f.FieldType, f.GetValue(a));
+                if (v == null) continue;
+                f.SetValue(a, v);
+                mutated++;
+            }
+            Check("every field is testable", mutated == fields.Length,
+                  mutated + " of " + fields.Length);
+
+            a.SaveUserPreset(dir, "Coverage");
+            var b = new Settings();
+            b.LoadUserPreset(dir, "Coverage");
+
+            var lost = new List<string>();
+            foreach (FieldInfo f in fields)
+                if (!Equals(f.GetValue(a), f.GetValue(b))) lost.Add(f.Name);
+
+            Check("every setting survives save and load", lost.Count == 0,
+                  lost.Count == 0 ? fields.Length + " fields"
+                                  : "lost: " + string.Join(", ", lost.ToArray()));
+        }
+        finally
+        {
+            try { System.IO.Directory.Delete(dir, true); } catch { }
+        }
+    }
+
+    /// <summary>A value guaranteed to differ from the one passed in.</summary>
+    static object Mutate(Type t, object current)
+    {
+        if (t == typeof(bool)) return !(bool)current;
+        if (t == typeof(int)) return (int)current + 7;
+        if (t == typeof(float)) return (float)current + 1.5f;
+        if (t == typeof(double)) return (double)current + 1.5;
+        if (t.IsEnum)
+        {
+            Array vals = Enum.GetValues(t);
+            int i = Array.IndexOf(vals, current);
+            return vals.GetValue((i + 1) % vals.Length);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// The two pieces of chrome that take space off the analysis have to give it back
+    /// when they are switched off, and give up gracefully when there is not enough.
+    /// </summary>
+    static void TestLayoutBudgets()
+    {
+        Console.WriteLine("[layout budgets]");
+        var s = new Settings();
+        using (var font = new Font("Segoe UI", 7f))
+        {
+            var full = new Rectangle(0, 0, 1920, 1000);
+            Rectangle bar;
+
+            s.ShowQuickButtons = true;
+            Rectangle left = QuickBar.Reserve(full, s, font, out bar);
+            int h = QuickBar.HeightFor(font, false);
+            Check("quick bar takes its height off the bottom",
+                  bar.Height == h && left.Height == full.Height - h && bar.Bottom == full.Bottom,
+                  "bar " + bar.Height + "px, panes " + left.Height + "px");
+
+            s.ShowQuickButtons = false;
+            left = QuickBar.Reserve(full, s, font, out bar);
+            Check("switched off it costs nothing", bar.Height == 0 && left == full, "");
+
+            // Below four bar heights the strip is taking more than it gives back.
+            s.ShowQuickButtons = true;
+            left = QuickBar.Reserve(new Rectangle(0, 0, 900, h * 3), s, font, out bar);
+            Check("hidden when the view is too short", bar.Height == 0, "at " + (h * 3) + "px tall");
+
+            s.QuickBarCompact = true;
+            Check("compact costs less height",
+                  QuickBar.HeightFor(font, true) < QuickBar.HeightFor(font, false),
+                  QuickBar.HeightFor(font, true) + " vs " + QuickBar.HeightFor(font, false));
+        }
+
+        var deck = new CenterDeck();
+        var wide = new Settings();
+        deck.Layout(new Rectangle(0, 0, 700, 110), wide);
+        Check("a wide gap fits everything",
+              deck.ArtRect.Width > 0 && deck.GoniometerRect.Width > 0 && deck.StackRect.Width > 0, "");
+
+        deck.Layout(new Rectangle(0, 0, 260, 110), wide);
+        Check("a narrow gap drops the artwork first",
+              deck.ArtRect.Width == 0 && deck.GoniometerRect.Width > 0 && deck.StackRect.Width > 0,
+              "gonio " + deck.GoniometerRect.Width + "px");
+
+        deck.Layout(new Rectangle(0, 0, 120, 110), wide);
+        Check("the goniometer is the last to go",
+              deck.GoniometerRect.Width > 0 && deck.StackRect.Width == 0, "");
+
+        deck.Layout(new Rectangle(0, 0, 20, 110), wide);
+        Check("no room at all leaves nothing placed",
+              deck.GoniometerRect.Width == 0 && deck.StackRect.Width == 0, "");
     }
 
     static void TestUserPresets()
