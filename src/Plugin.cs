@@ -127,7 +127,7 @@ namespace MusicBeePlugin
             panel.SuspendLayout();
             _hostPanel = panel;
             var view = new AnalyzerPanel(_settings, _storageDir);
-            view.NowPlaying = GetNowPlaying;
+            view.Player = BuildBridge();
             view.DockHeightRequested = ApplyDockHeight;
             view.Dock = DockStyle.Fill;
             panel.Controls.Add(view);
@@ -272,6 +272,34 @@ namespace MusicBeePlugin
             if (host.Parent != null) host.Parent.PerformLayout();
             host.Refresh();
             Trace("dock height set to " + px + " (actual " + host.Height + ")");
+        }
+
+        /// <summary>
+        /// Wraps the host API in the views' own vocabulary. Every delegate is checked
+        /// for null here rather than at the call site, because which slots MusicBee
+        /// fills depends on its version.
+        /// </summary>
+        private PlayerBridge BuildBridge()
+        {
+            var b = new PlayerBridge();
+            b.Info = GetNowPlaying;
+            if (_mb.Player_GetPosition != null)
+                b.Position = delegate { return _mb.Player_GetPosition(); };
+            if (_mb.NowPlaying_GetDuration != null)
+                b.Duration = delegate { return _mb.NowPlaying_GetDuration(); };
+            if (_mb.Player_GetPlayState != null)
+                b.IsPlaying = delegate { return _mb.Player_GetPlayState() == PlayState.Playing; };
+            if (_mb.NowPlaying_GetArtwork != null)
+                b.Artwork = delegate { return _mb.NowPlaying_GetArtwork(); };
+            if (_mb.Player_PlayPause != null)
+                b.PlayPause = delegate { _mb.Player_PlayPause(); };
+            if (_mb.Player_PlayNextTrack != null)
+                b.Next = delegate { _mb.Player_PlayNextTrack(); };
+            if (_mb.Player_PlayPreviousTrack != null)
+                b.Previous = delegate { _mb.Player_PlayPreviousTrack(); };
+            if (_mb.Player_SetPosition != null)
+                b.Seek = delegate(int ms) { _mb.Player_SetPosition(ms); };
+            return b;
         }
 
         /// <summary>Track metadata for the fullscreen overlay.</summary>

@@ -26,18 +26,10 @@ namespace NostalgiaPlus.Ui
         [DllImport("winmm.dll")] private static extern uint timeBeginPeriod(uint ms);
         [DllImport("winmm.dll")] private static extern uint timeEndPeriod(uint ms);
 
-        private sealed class QuickButton
-        {
-            public string Name;
-            public Func<string> Value;
-            public Action Cycle;
-            public Rectangle Rect;
-        }
-
         private readonly Settings _settings;
         private readonly string _storageDir;
         private readonly LoopbackCapture _capture;
-        private readonly NowPlayingProvider _nowPlaying;
+        private readonly PlayerBridge _player;
 
         private readonly StereoScope _scope = new StereoScope();
         private readonly LoudnessMeter _meter = new LoudnessMeter();
@@ -47,6 +39,8 @@ namespace NostalgiaPlus.Ui
         private int[] _lut;
         private double[] _chunkL = new double[8192], _chunkR = new double[8192];
         private long _meterCursor = -1;
+        // Waveform extremes gathered since the last column was taken.
+        private float _accLoA, _accHiA, _accLoB, _accHiB;
 
         private Thread _worker;
         private volatile bool _running;
@@ -54,7 +48,13 @@ namespace NostalgiaPlus.Ui
         private volatile bool _invalidatePending;
 
         private Rectangle _scopeRect, _waveARect, _waveBRect;
-        private readonly List<QuickButton> _buttons = new List<QuickButton>();
+        private readonly QuickBar _quick = new QuickBar();
+        private readonly CenterDeck _deck = new CenterDeck();
+        // Sample pairs for the goniometer, refreshed each frame. Fixed length: the trace
+        // wants a consistent number of points however long the capture chunk was.
+        private readonly float[] _gonL = new float[1024];
+        private readonly float[] _gonR = new float[1024];
+        private int _gonCount;
 
         private Font _fontBig, _fontMid, _fontSmall, _fontTiny;
         private double _fps, _analysisMs, _paintMs;
@@ -66,15 +66,14 @@ namespace NostalgiaPlus.Ui
 
         private const double IdleHoldSeconds = 3.0;
         private const double IdleFadeSeconds = 1.5;
-        private const int ButtonBarHeight = 30;
 
         public FullscreenView(Settings settings, string storageDir,
-                              LoopbackCapture capture, NowPlayingProvider nowPlaying)
+                              LoopbackCapture capture, PlayerBridge player)
         {
             _settings = settings;
             _storageDir = storageDir;
             _capture = capture;
-            _nowPlaying = nowPlaying;
+            _player = player ?? new PlayerBridge();
 
             FormBorderStyle = FormBorderStyle.None;
             ShowInTaskbar = false;
@@ -89,7 +88,7 @@ namespace NostalgiaPlus.Ui
             _scope.SetPalette(_lut);
             _hintUntil = DateTime.UtcNow.AddSeconds(4);
 
-            BuildButtons();
+            _quick.Build(_settings, OnSettingsChanged);
 
             var menu = new ContextMenuStrip();
             menu.Opening += delegate
@@ -127,83 +126,6 @@ namespace NostalgiaPlus.Ui
             _fontMid = new Font("Segoe UI", b + 4f);
             _fontSmall = new Font("Segoe UI", b + 1.5f);
             _fontTiny = new Font("Segoe UI", b);
-        }
-
-        // ---------------- quick buttons ----------------
-
-        private static T Next<T>(T current)
-        {
-            var vals = (T[])Enum.GetValues(typeof(T));
-            int i = Array.IndexOf(vals, current);
-            return vals[(i + 1) % vals.Length];
-        }
-
-        private void BuildButtons()
-        {
-            _buttons.Clear();
-            Add("CHANNELS", delegate { return _settings.PairMode.ToString(); },
-                delegate { _settings.PairMode = Next(_settings.PairMode); OnSettingsChanged(true); });
-            Add("SCALE", delegate { return _settings.Scale.ToString(); },
-                delegate
-                {
-                    _settings.Scale = Next(_settings.Scale);
-                    if (_settings.Scale == FreqScale.Linear) { _settings.FMin = 0; _settings.FMax = 22050; }
-                    else { _settings.FMin = 25; _settings.FMax = 18000; }
-                    _settings.Preset = Preset.Custom;
-                    OnSettingsChanged(true);
-                });
-            Add("RESOLUTION", delegate { return _settings.Quality.ToString(); },
-                delegate { _settings.Quality = Next(_settings.Quality); _settings.Preset = Preset.Custom; OnSettingsChanged(false); });
-            Add("STYLE", delegate { return _settings.Style.ToString(); },
-                delegate { _settings.Style = Next(_settings.Style); OnSettingsChanged(false); });
-            Add("PALETTE", delegate { return Palette.DisplayName(_settings.Palette); },
-                delegate { _settings.Palette = Next(_settings.Palette); _settings.Preset = Preset.Custom; OnSettingsChanged(false); });
-            Add("TILT", delegate { return _settings.TiltDbPerOctave.ToString("0.0") + " dB/oct"; },
-                delegate
-                {
-                    double[] t = { 0, 1.5, 3.0, 4.5, 6.0 };
-                    int i = 0;
-                    for (int k = 0; k < t.Length; k++) if (Math.Abs(t[k] - _settings.TiltDbPerOctave) < 0.01) i = k;
-                    _settings.TiltDbPerOctave = t[(i + 1) % t.Length];
-                    _settings.Preset = Preset.Custom;
-                    OnSettingsChanged(false);
-                });
-            Add("CONTRAST", delegate { return (_settings.Contrast * 100).ToString("0") + "%"; },
-                delegate
-                {
-                    double[] c = { 0.15, 0.25, 0.40, 0.55, 0.70, 0.82 };
-                    int i = 0;
-                    for (int k = 0; k < c.Length; k++) if (Math.Abs(c[k] - _settings.Contrast) < 0.01) i = k;
-                    _settings.Contrast = c[(i + 1) % c.Length];
-                    OnSettingsChanged(false);
-                });
-            Add("GRAPH", delegate { return _settings.CurveWidthPct + "%"; },
-                delegate
-                {
-                    int[] p = { 0, 8, 12, 18, 25, 33, 45 };
-                    int i = 0;
-                    for (int k = 0; k < p.Length; k++) if (p[k] == _settings.CurveWidthPct) i = k;
-                    _settings.CurveWidthPct = p[(i + 1) % p.Length];
-                    OnSettingsChanged(true);
-                });
-            Add("MIRROR", delegate { return _settings.MirrorLeftPane ? "On" : "Off"; },
-                delegate { _settings.MirrorLeftPane = !_settings.MirrorLeftPane; OnSettingsChanged(true); });
-            Add("SPEED", delegate { return "1/" + _settings.ScrollDivider; },
-                delegate
-                {
-                    int[] d = { 1, 2, 4, 8 };
-                    int i = 0;
-                    for (int k = 0; k < d.Length; k++) if (d[k] == _settings.ScrollDivider) i = k;
-                    _settings.ScrollDivider = d[(i + 1) % d.Length];
-                    OnSettingsChanged(false);
-                });
-        }
-
-        private void Add(string name, Func<string> value, Action cycle)
-        {
-            var b = new QuickButton();
-            b.Name = name; b.Value = value; b.Cycle = cycle;
-            _buttons.Add(b);
         }
 
         // ---------------- lifecycle ----------------
@@ -270,17 +192,10 @@ namespace NostalgiaPlus.Ui
 
         public void RefreshNowPlaying()
         {
-            if (_nowPlaying != null)
+            string[] info = _player.SafeInfo();
+            if (info != null && info.Length >= 3)
             {
-                try
-                {
-                    string[] info = _nowPlaying();
-                    if (info != null && info.Length >= 3)
-                    {
-                        _title = info[0] ?? ""; _artist = info[1] ?? ""; _album = info[2] ?? "";
-                    }
-                }
-                catch { }
+                _title = info[0] ?? ""; _artist = info[1] ?? ""; _album = info[2] ?? "";
             }
             _infoUntil = DateTime.UtcNow.AddSeconds(6);
             lock (_gate) { _scope.ResetRange(); _meter.Reset(); }
@@ -319,48 +234,64 @@ namespace NostalgiaPlus.Ui
                 int w = Math.Max(16, ClientSize.Width);
                 int h = Math.Max(16, ClientSize.Height);
 
+                // One band at the bottom carries both the waveform lanes and the deck,
+                // so turning the lanes off does not take the deck with them.
+                bool wantBand = _settings.FsShowWaveform || _settings.ShowCenterDeck;
                 int waveH = 0;
-                if (_settings.FsShowWaveform && _settings.WaveHeightPct > 0)
+                if (wantBand && _settings.WaveHeightPct > 0)
                     waveH = Math.Max(24, h * Math.Min(40, _settings.WaveHeightPct) / 100);
 
-                _scopeRect = new Rectangle(0, 0, w, Math.Max(16, h - waveH));
+                // The bar sits between the panes and the waveform lanes, in space of its
+                // own: floating it over the spectrogram hid the newest few seconds.
+                Rectangle quickBar;
+                _scopeRect = QuickBar.Reserve(new Rectangle(0, 0, w, Math.Max(16, h - waveH)),
+                                              _settings, _fontTiny, out quickBar);
                 double sr = _capture != null ? _capture.SampleRate : 48000;
                 _scope.Layout(_scopeRect, _settings, sr);
 
+                // Positioned after Layout, because splitting it needs the gutter, which
+                // does not exist until the panes have been placed.
+                Rectangle gut = _scope.GutterRect;
+                if (_settings.QuickBarSplit && gut.Width > 0)
+                    _quick.Layout(quickBar, _fontTiny, _settings.QuickBarCompact, gut.Left, gut.Right);
+                else
+                    _quick.Layout(quickBar, _fontTiny, _settings.QuickBarCompact);
+
                 ChannelPane[] panes = _scope.Panes;
-                _waveARect = waveH > 0 && panes.Length > 0
-                    ? new Rectangle(panes[0].SpectroRect.X, _scopeRect.Bottom, panes[0].SpectroRect.Width, waveH)
+                int waveTop = h - waveH;
+                bool lanes = _settings.FsShowWaveform && waveH > 0;
+                _waveARect = lanes && panes.Length > 0
+                    ? new Rectangle(panes[0].SpectroRect.X, waveTop, panes[0].SpectroRect.Width, waveH)
                     : Rectangle.Empty;
-                _waveBRect = waveH > 0 && panes.Length > 1
-                    ? new Rectangle(panes[1].SpectroRect.X, _scopeRect.Bottom, panes[1].SpectroRect.Width, waveH)
+                _waveBRect = lanes && panes.Length > 1
+                    ? new Rectangle(panes[1].SpectroRect.X, waveTop, panes[1].SpectroRect.Width, waveH)
                     : Rectangle.Empty;
+
+                // The deck takes the gap the lanes leave in the middle - the two graph
+                // strips plus the gutter. With the lanes off it gets a centred slot of
+                // its own instead, so the block does not disappear with them.
+                Rectangle deck = Rectangle.Empty;
+                if (_settings.ShowCenterDeck && waveH > 0)
+                {
+                    if (_waveARect.Width > 0 && _waveBRect.Width > 0)
+                    {
+                        int gl = Math.Min(_waveARect.Right, _waveBRect.Right);
+                        int gr = Math.Max(_waveARect.Left, _waveBRect.Left);
+                        if (gr > gl) deck = new Rectangle(gl, waveTop, gr - gl, waveH);
+                    }
+                    else
+                    {
+                        int dw = Math.Min(900, w - 40);
+                        deck = new Rectangle((w - dw) / 2, waveTop, dw, waveH);
+                    }
+                }
+                _deck.Layout(deck, _settings);
 
                 int capA = Math.Max(8, _waveARect.Width + 4);
                 if (_wfA == null) _wfA = new WaveformRing(capA); else _wfA.Resize(capA);
                 int capB = Math.Max(8, _waveBRect.Width + 4);
                 if (_wfB == null) _wfB = new WaveformRing(capB); else _wfB.Resize(capB);
 
-                LayoutButtons(w, h, waveH);
-            }
-        }
-
-        private void LayoutButtons(int w, int h, int waveH)
-        {
-            int total = 0;
-            var widths = new int[_buttons.Count];
-            using (var g = CreateGraphics())
-                for (int i = 0; i < _buttons.Count; i++)
-                {
-                    string t = _buttons[i].Name + "  " + _buttons[i].Value();
-                    widths[i] = (int)g.MeasureString(t, _fontTiny).Width + 22;
-                    total += widths[i] + 6;
-                }
-            int x = (w - total) / 2;
-            int y = h - waveH - ButtonBarHeight - 8;
-            for (int i = 0; i < _buttons.Count; i++)
-            {
-                _buttons[i].Rect = new Rectangle(x, y, widths[i], ButtonBarHeight);
-                x += widths[i] + 6;
             }
         }
 
@@ -420,6 +351,19 @@ namespace NostalgiaPlus.Ui
             if (got > 0)
             {
                 _meter.Process(_chunkL, _chunkR, got);
+
+                // Decimated to a fixed count: the goniometer wants a consistent trace
+                // length, and drawing every sample of a large chunk would cost far more
+                // than it shows.
+                int want = Math.Min(_gonL.Length, got);
+                int step = Math.Max(1, got / Math.Max(1, want));
+                int n = 0;
+                for (int i = 0; i < got && n < _gonL.Length; i += step, n++)
+                {
+                    _gonL[n] = (float)_chunkL[i];
+                    _gonR[n] = (float)_chunkR[i];
+                }
+                _gonCount = n;
                 bool ms = _settings.PairMode == ChannelPairMode.MidSide;
                 for (int i = 0; i < got; i++)
                 {
@@ -431,13 +375,24 @@ namespace NostalgiaPlus.Ui
                 }
             }
 
+            // Carried across frames rather than pushed straight away: the spectrogram
+            // takes a column only every ScrollDivider frames, and a waveform advancing
+            // once per frame covered a different span of time at every speed but 1/1 -
+            // so a transient did not line up with the column that produced it. Keeping
+            // the extremes here also means no audio is skipped between columns.
+            if (loA < _accLoA) _accLoA = loA;
+            if (hiA > _accHiA) _accHiA = hiA;
+            if (loB < _accLoB) _accLoB = loB;
+            if (hiB > _accHiB) _accHiB = hiB;
+
             lock (_gate)
             {
                 if (!_scope.Analyse(cap, _settings, dt, _frozen)) return;
-                if (!_frozen)
+                if (!_frozen && _scope.PushedColumn)
                 {
-                    if (_wfA != null) _wfA.Push(loA, hiA);
-                    if (_wfB != null) _wfB.Push(loB, hiB);
+                    if (_wfA != null) _wfA.Push(_accLoA, _accHiA);
+                    if (_wfB != null) _wfB.Push(_accLoB, _accHiB);
+                    _accLoA = _accHiA = _accLoB = _accHiB = 0;
                 }
             }
         }
@@ -469,14 +424,18 @@ namespace NostalgiaPlus.Ui
             }
 
             bool glow = _settings.FsImmersive && _settings.FsGlow;
+            // Track info and meters float over the image, so they begin below the scale
+            // strip; the pane insets are measured from the image, which already excludes it.
+            int chromeTop;
             lock (_gate)
             {
-                _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture,
-                                 _settings.FsShowOverlays ? 84 : 0);
+                chromeTop = _scope.ChromeTop;
+                int inset = _settings.FsShowOverlays ? 84 : 0;
+                _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture, inset);
                 if (_settings.ShowGrid && furniture > 0.004)
                     _scope.DrawGrid(g, _settings, _fontTiny, furniture,
-                                    _settings.FsShowOverlays ? 84 : 0);
-                _scope.DrawPaneLabels(g, _fontSmall, furniture, _settings.FsShowOverlays ? 84 : 0);
+                                    _settings.FsShowOverlays ? chromeTop + 84 : 0);
+                _scope.DrawPaneLabels(g, _fontSmall, furniture, inset);
             }
 
             if (_settings.ShowHud && _hover.Active && _settings.FsShowOsd)
@@ -487,8 +446,13 @@ namespace NostalgiaPlus.Ui
                 }
             }
             if (_settings.FsShowWaveform && _waveARect.Height > 0) DrawWaveforms(g);
-            if (_settings.FsShowOverlays && _settings.FsShowOsd) DrawOverlays(g, furniture);
-            if (furniture > 0.004 && _settings.FsShowOsd) DrawButtons(g, furniture);
+            if (_settings.ShowCenterDeck && _settings.FsShowOsd)
+                lock (_gate)
+                    _deck.Draw(g, _settings, _fontTiny, furniture,
+                               _lut, _meter, _player, _gonL, _gonR, _gonCount);
+            if (_settings.FsShowOverlays && _settings.FsShowOsd) DrawOverlays(g, furniture, chromeTop);
+            if (furniture > 0.004 && _settings.FsShowOsd)
+                _quick.Draw(g, _fontTiny, furniture, _settings.QuickBarCompact);
             if (_settings.FsShowOsd) DrawHint(g);
         }
 
@@ -542,57 +506,35 @@ namespace NostalgiaPlus.Ui
                 g.FillPolygon(brush, _wavePoly);
         }
 
-        private void DrawButtons(Graphics g, double alpha)
-        {
-            for (int i = 0; i < _buttons.Count; i++)
-            {
-                QuickButton b = _buttons[i];
-                if (b.Rect.Width <= 0) continue;
-                using (var back = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(190, 18, 18, 22), alpha)))
-                using (var edge = new Pen(StereoScope.FadeColor(Color.FromArgb(70, 255, 255, 255), alpha)))
-                {
-                    g.FillRectangle(back, b.Rect);
-                    g.DrawRectangle(edge, b.Rect);
-                }
-                using (var nameBrush = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(140, 190, 190, 200), alpha)))
-                using (var valBrush = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(235, 245, 245, 250), alpha)))
-                {
-                    g.DrawString(b.Name, _fontTiny, nameBrush, b.Rect.X + 8, b.Rect.Y + 2);
-                    g.DrawString(b.Value(), _fontTiny, valBrush, b.Rect.X + 8, b.Rect.Y + 14);
-                }
-            }
-        }
-
-        private void DrawOverlays(Graphics g, double alpha)
+        private void DrawOverlays(Graphics g, double alpha, int top)
         {
             double infoAlpha = alpha;
             if (DateTime.UtcNow < _infoUntil) infoAlpha = 1.0;
             if (alpha <= 0.004 && infoAlpha <= 0.004) return;
 
             int barH = 78;
-            using (var grad = new LinearGradientBrush(new Rectangle(0, 0, ClientSize.Width, barH),
+            using (var grad = new LinearGradientBrush(new Rectangle(0, top, ClientSize.Width, barH),
                        StereoScope.FadeColor(Color.FromArgb(190, 0, 0, 0), Math.Max(alpha, infoAlpha)),
                        Color.FromArgb(0, 0, 0, 0), LinearGradientMode.Vertical))
-                g.FillRectangle(grad, 0, 0, ClientSize.Width, barH);
+                g.FillRectangle(grad, 0, top, ClientSize.Width, barH);
 
             if (infoAlpha > 0.004)
                 using (var w = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(240, 245, 245, 248), infoAlpha)))
                 using (var d = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(170, 200, 200, 210), infoAlpha)))
                 {
-                    if (_title.Length > 0) g.DrawString(_title, _fontBig, w, 16, 6);
+                    if (_title.Length > 0) g.DrawString(_title, _fontBig, w, 16, top + 6);
                     string sub = _artist;
                     if (_album.Length > 0) sub += (sub.Length > 0 ? "  ·  " : "") + _album;
-                    if (sub.Length > 0) g.DrawString(sub, _fontMid, d, 18, 44);
+                    if (sub.Length > 0) g.DrawString(sub, _fontMid, d, 18, top + 44);
                 }
 
             if (alpha <= 0.004) return;
 
-            double mLufs, sLufs, tp, crest, corr, bal;
+            double mLufs, sLufs, tp, crest;
             lock (_gate)
             {
                 mLufs = _meter.MomentaryLufs; sLufs = _meter.ShortTermLufs;
                 tp = _meter.TruePeakDb; crest = _meter.CrestDb;
-                corr = _meter.Correlation; bal = _meter.Balance;
             }
 
             using (var lbl = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(150, 190, 190, 200), alpha)))
@@ -609,41 +551,9 @@ namespace NostalgiaPlus.Ui
                     SizeF ls = g.MeasureString(names[i], _fontTiny);
                     float colW = Math.Max(vs.Width, ls.Width) + 18;
                     x -= (int)colW;
-                    g.DrawString(names[i], _fontTiny, lbl, x, 8);
-                    g.DrawString(vals[i], _fontMid, (i == 2 && tp > -1.0) ? warn : val, x, 22);
+                    g.DrawString(names[i], _fontTiny, lbl, x, top + 8);
+                    g.DrawString(vals[i], _fontMid, (i == 2 && tp > -1.0) ? warn : val, x, top + 22);
                 }
-            }
-
-            int mw = 210, mx = ClientSize.Width / 2 - mw / 2;
-            DrawMeterBar(g, mx, 14, mw, "CORRELATION", corr,
-                         corr < 0 ? Color.FromArgb(255, 120, 90) : Palette.ColorAt(_lut, 0.8), alpha);
-            DrawMeterBar(g, mx, 44, mw, "BALANCE", bal, Palette.ColorAt(_lut, 0.65), alpha);
-        }
-
-        private void DrawMeterBar(Graphics g, int x, int y, int w, string label,
-                                  double value, Color colour, double alpha)
-        {
-            using (var track = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(120, 40, 40, 46), alpha)))
-                g.FillRectangle(track, x, y + 9, w, 5);
-            using (var centre = new Pen(StereoScope.FadeColor(Color.FromArgb(90, 255, 255, 255), alpha)))
-                g.DrawLine(centre, x + w / 2, y + 7, x + w / 2, y + 16);
-
-            double t = (value + 1.0) / 2.0;
-            if (t < 0) t = 0; else if (t > 1) t = 1;
-            int px = x + (int)(t * w);
-            int from = Math.Min(px, x + w / 2);
-            int width = Math.Abs(px - (x + w / 2));
-            using (var fill = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(210, colour), alpha)))
-                g.FillRectangle(fill, from, y + 9, Math.Max(1, width), 5);
-            using (var knob = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(255, 250, 250, 252), alpha)))
-                g.FillRectangle(knob, px - 1, y + 6, 2, 11);
-            using (var lbl = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(140, 190, 190, 200), alpha)))
-                g.DrawString(label, _fontTiny, lbl, x, y - 4);
-            using (var val = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(220, 240, 240, 245), alpha)))
-            {
-                string s = value.ToString("+0.00;-0.00; 0.00");
-                SizeF sz = g.MeasureString(s, _fontTiny);
-                g.DrawString(s, _fontTiny, val, x + w - sz.Width, y - 4);
             }
         }
 
@@ -670,8 +580,10 @@ namespace NostalgiaPlus.Ui
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            _quick.SetHot(e.Location);
             _hover.Cursor = e.Location;
-            _hover.Active = true;
+            // No readout while the pointer is on the bar: there is no spectrum under it.
+            _hover.Active = !_quick.Contains(e.Location) && !_deck.Contains(e.Location);
             if (_mouseDown &&
                 (Math.Abs(e.X - _hover.Origin.X) > 4 || Math.Abs(e.Y - _hover.Origin.Y) > 4))
             {
@@ -684,6 +596,7 @@ namespace NostalgiaPlus.Ui
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
+            _quick.SetHot(new Point(-1, -1));
             _hover.Active = false;
         }
 
@@ -691,6 +604,8 @@ namespace NostalgiaPlus.Ui
         {
             base.OnMouseUp(e);
             if (e.Button != MouseButtons.Left) return;
+            if (_quick.Click(e.Location)) { _mouseDown = false; Invalidate(); return; }
+            if (_deck.Click(e.Location, _player)) { _mouseDown = false; Invalidate(); return; }
             _mouseDown = false;
             // A click freezes so a moment can be read without it scrolling away; a drag
             // is a measurement and leaves its result on screen until the next press.
@@ -702,8 +617,8 @@ namespace NostalgiaPlus.Ui
             base.OnMouseDown(e);
             Touch();
             if (e.Button != MouseButtons.Left) return;
-            for (int i = 0; i < _buttons.Count; i++)
-                if (_buttons[i].Rect.Contains(e.Location)) { _buttons[i].Cycle(); return; }
+            // A press on a control is that control's, not the start of a measurement.
+            if (_quick.Contains(e.Location) || _deck.Contains(e.Location)) return;
             _mouseDown = true;
             _dragged = false;
             _hover.Origin = e.Location;
@@ -732,16 +647,16 @@ namespace NostalgiaPlus.Ui
                     _settings.FsShowOsd = !_settings.FsShowOsd;
                     OnSettingsChanged(false); return true;
                 case Keys.B:
-                    _settings.Style = Next(_settings.Style);
+                    _settings.Style = QuickBar.Next(_settings.Style);
                     OnSettingsChanged(false); return true;
                 case Keys.C:
-                    _settings.PairMode = Next(_settings.PairMode);
+                    _settings.PairMode = QuickBar.Next(_settings.PairMode);
                     OnSettingsChanged(true); return true;
                 case Keys.M:
                     _settings.MirrorLeftPane = !_settings.MirrorLeftPane;
                     OnSettingsChanged(true); return true;
                 case Keys.P:
-                    _settings.Palette = Next(_settings.Palette);
+                    _settings.Palette = QuickBar.Next(_settings.Palette);
                     _settings.Preset = Preset.Custom;
                     OnSettingsChanged(false);
                     _hintUntil = DateTime.UtcNow.AddSeconds(1.5);

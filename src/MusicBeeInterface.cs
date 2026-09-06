@@ -67,6 +67,14 @@ namespace MusicBeePlugin
         public delegate int Setting_GetSkinElementColour_D(SkinElement element, ElementState state, ElementComponent component);
         public delegate bool Setting_IsWindowBordersSkinned_D();
         public delegate int Player_GetPosition_D();
+        // Signatures below were read off the reference plugin by reflection, the same
+        // way the struct layout was, rather than guessed - a wrong delegate here is a
+        // crash inside the host, not a quiet failure.
+        public delegate bool Player_SetPosition_D(int position);
+        public delegate bool Player_PlayPause_D();
+        public delegate bool Player_PlayPreviousTrack_D();
+        public delegate bool Player_PlayNextTrack_D();
+        public delegate string NowPlaying_GetArtwork_D();
         public delegate PlayState Player_GetPlayState_D();
         public delegate string NowPlaying_GetFileUrl_D();
         public delegate int NowPlaying_GetDuration_D();
@@ -102,13 +110,13 @@ namespace MusicBeePlugin
             public IntPtr Library_QueryFiles;
             public IntPtr Library_QueryGetNextFile;
             public Player_GetPosition_D Player_GetPosition;
-            public IntPtr Player_SetPosition;
+            public Player_SetPosition_D Player_SetPosition;
             public Player_GetPlayState_D Player_GetPlayState;
-            public IntPtr Player_PlayPause;
+            public Player_PlayPause_D Player_PlayPause;
             public IntPtr Player_Stop;
             public IntPtr Player_StopAfterCurrent;
-            public IntPtr Player_PlayPreviousTrack;
-            public IntPtr Player_PlayNextTrack;
+            public Player_PlayPreviousTrack_D Player_PlayPreviousTrack;
+            public Player_PlayNextTrack_D Player_PlayNextTrack;
             public IntPtr Player_StartAutoDj;
             public IntPtr Player_EndAutoDj;
             public IntPtr Player_GetVolume;
@@ -130,7 +138,7 @@ namespace MusicBeePlugin
             public IntPtr NowPlaying_GetFileProperty;
             public NowPlaying_GetFileTag_D NowPlaying_GetFileTag;
             public IntPtr NowPlaying_GetLyrics;
-            public IntPtr NowPlaying_GetArtwork;
+            public NowPlaying_GetArtwork_D NowPlaying_GetArtwork;
             public IntPtr NowPlayingList_Clear;
             public IntPtr NowPlayingList_QueryFiles;
             public IntPtr NowPlayingList_QueryGetNextFile;

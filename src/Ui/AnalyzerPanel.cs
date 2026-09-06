@@ -37,6 +37,7 @@ namespace NostalgiaPlus.Ui
         private bool _ownsCapture = true;
 
         private Rectangle _barRect;
+        private readonly QuickBar _quick = new QuickBar();
         private Font _font, _fontSmall;
         private double _fps, _lastAnalysisMs;
         private readonly HoverInfo _hover = new HoverInfo();
@@ -45,8 +46,8 @@ namespace NostalgiaPlus.Ui
         private Bitmap _barCache;
         private int[] _barCacheLut;
 
-        /// <summary>Supplies {title, artist, album} for the fullscreen overlay.</summary>
-        public NowPlayingProvider NowPlaying { get; set; }
+        /// <summary>Host player access, handed on to the fullscreen view.</summary>
+        public PlayerBridge Player { get; set; }
 
         /// <summary>Raised when the user picks a docked height; the plugin owns the host control.</summary>
         public Action<int> DockHeightRequested { get; set; }
@@ -64,6 +65,7 @@ namespace NostalgiaPlus.Ui
             TabStop = true;
             BackColor = Color.Black;
             RebuildFonts();
+            _quick.Build(_settings, OnSettingsChanged);
             _lut = Palette.BuildLut(_settings.Palette);
             _scope.SetPalette(_lut);
 
@@ -173,7 +175,7 @@ namespace NostalgiaPlus.Ui
             if (_fullscreen != null && !_fullscreen.IsDisposed) { _fullscreen.Close(); return; }
             if (_capture == null) return;
 
-            var view = new FullscreenView(_settings, _storageDir, _capture, NowPlaying);
+            var view = new FullscreenView(_settings, _storageDir, _capture, Player);
             view.FormClosed += delegate
             {
                 _paused = false;
@@ -205,8 +207,15 @@ namespace NostalgiaPlus.Ui
                 int barW = _settings.ShowColorBar ? ColorBarWidth : 0;
                 _barRect = new Rectangle(w - barW, 0, barW, h);
 
+                // The quick bar takes reserved space off the bottom rather than floating
+                // over the spectrogram, so nothing it covers is ever lost.
+                Rectangle quickBar;
+                Rectangle area = QuickBar.Reserve(new Rectangle(0, 0, Math.Max(16, w - barW), h),
+                                                 _settings, _fontSmall, out quickBar);
+                _quick.Layout(quickBar, _fontSmall, _settings.QuickBarCompact);
+
                 double sr = _capture != null ? _capture.SampleRate : 48000;
-                _scope.Layout(new Rectangle(0, 0, Math.Max(16, w - barW), h), _settings, sr);
+                _scope.Layout(area, _settings, sr);
             }
         }
 
@@ -265,17 +274,24 @@ namespace NostalgiaPlus.Ui
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
             g.Clear(Palette.Background(_lut));
 
+            // The status line is chrome over the image, so it starts below the scale
+            // strip; the pane insets stay relative to the image, which already does.
+            int chromeTop, inset;
             lock (_gate)
             {
-                _scope.DrawPanes(g, _settings, false, _fontSmall, 1.0,
-                                 _settings.ShowStatus ? 14 : 0);
-                if (_settings.ShowGrid) _scope.DrawGrid(g, _settings, _fontSmall, 1.0, _settings.ShowStatus ? 16 : 0);
+                chromeTop = _scope.ChromeTop;
+                inset = _settings.ShowStatus ? 14 : 0;
+                _scope.DrawPanes(g, _settings, false, _fontSmall, 1.0, inset);
+                if (_settings.ShowGrid)
+                    _scope.DrawGrid(g, _settings, _fontSmall, 1.0,
+                                    _settings.ShowStatus ? chromeTop + 16 : 0);
                 // Keep the channel labels clear of the status line.
-                if (_settings.ShowLabels) _scope.DrawPaneLabels(g, _fontSmall, 1.0, _settings.ShowStatus ? 14 : 0);
+                if (_settings.ShowLabels) _scope.DrawPaneLabels(g, _fontSmall, 1.0, inset);
             }
 
             if (_settings.ShowColorBar && _barRect.Width > 0) DrawColorBar(g);
-            if (_settings.ShowStatus) DrawStatus(g);
+            _quick.Draw(g, _fontSmall, 1.0, _settings.QuickBarCompact);
+            if (_settings.ShowStatus) DrawStatus(g, chromeTop);
             if (_settings.ShowHud && _hover.Active)
                 _scope.DrawHover(g, _hover, _settings, _font, _fontSmall);
         }
@@ -311,14 +327,14 @@ namespace NostalgiaPlus.Ui
             }
         }
 
-        private void DrawStatus(Graphics g)
+        private void DrawStatus(Graphics g, int top)
         {
             string src = _capture == null ? "no source" : _capture.Status;
             string text = string.Format("{0}  |  {1}  |  {2}  |  {3:0} fps  |  {4:0.0} ms  |  {5}{6}",
                 src, _scope.Analyzer.DescribeResolution(), _settings.PairMode, _fps,
                 _lastAnalysisMs, _settings.Preset, _frozen ? "  |  FROZEN" : "");
             using (var brush = new SolidBrush(Color.FromArgb(140, 210, 210, 215)))
-                g.DrawString(text, _fontSmall, brush, 4, 2);
+                g.DrawString(text, _fontSmall, brush, 4, top + 2);
         }
 
         // ---------------- interaction ----------------
@@ -328,6 +344,8 @@ namespace NostalgiaPlus.Ui
             base.OnMouseDown(e);
             if (!Focused) { try { Focus(); } catch { } }
             if (e.Button != MouseButtons.Left) return;
+            // A press on a button is that button's, not the start of a measurement.
+            if (_quick.Contains(e.Location)) return;
             _mouseDown = true;
             _dragged = false;
             _hover.Origin = e.Location;
@@ -338,6 +356,7 @@ namespace NostalgiaPlus.Ui
         {
             base.OnMouseUp(e);
             if (e.Button != MouseButtons.Left) return;
+            if (_quick.Click(e.Location)) { _mouseDown = false; Invalidate(); return; }
             _mouseDown = false;
             if (!_dragged) { _frozen = !_frozen; Invalidate(); }
         }
@@ -345,8 +364,10 @@ namespace NostalgiaPlus.Ui
         protected override void OnMouseMove(MouseEventArgs e)
         {
             base.OnMouseMove(e);
+            if (_quick.SetHot(e.Location)) Invalidate();
             _hover.Cursor = e.Location;
-            _hover.Active = true;
+            // No readout while the pointer is on the bar: there is no spectrum under it.
+            _hover.Active = !_quick.Contains(e.Location);
             if (_mouseDown &&
                 (Math.Abs(e.X - _hover.Origin.X) > 4 || Math.Abs(e.Y - _hover.Origin.Y) > 4))
             {
@@ -358,6 +379,7 @@ namespace NostalgiaPlus.Ui
         protected override void OnMouseLeave(EventArgs e)
         {
             base.OnMouseLeave(e);
+            _quick.SetHot(new Point(-1, -1));
             _hover.Active = false;
             Invalidate();
         }
