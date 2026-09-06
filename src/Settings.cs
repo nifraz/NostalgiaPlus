@@ -36,6 +36,8 @@ namespace NostalgiaPlus
         public double CeilingDb = -5.0;
         public bool ShowCurve = true;
         public double CurveRatio = 0.32;
+        // Anything prefixed Fs is genuinely fullscreen-only. Everything else is shared
+        // by both views, so a change in one is visible in the other.
         public bool ShowGrid = true;
         public bool ShowLabels = true;
         public bool ShowColorBar = true;
@@ -90,7 +92,6 @@ namespace NostalgiaPlus
         public bool FsShowOsd = true;
         public int BarSize = 6;
         public int LedSegment = 5;
-        public int PanelCurveWidth = 90;
         /// <summary>
         /// Preferred height of the docked panel, reported to MusicBee when it creates the
         /// panel. Kept as a setting rather than a constant so it cannot silently overwrite
@@ -104,11 +105,10 @@ namespace NostalgiaPlus
         public double Contrast = 0.25;
 
         // --- fullscreen mirrored stereo view ---
-        public int FsCurveWidth = 150;   // per side
-        public int FsGutterWidth = 34;   // centre label gutter
+        /// <summary>Centre label gutter. Shared: both views lay panes out identically.</summary>
+        public int GutterWidth = 34;
         public bool FsShowWaveform = true;
         public bool FsShowOverlays = true;
-        public bool FsShowGrid = true;
         /// <summary>Glow and auto-hiding furniture, for watching rather than measuring.</summary>
         public bool FsImmersive = false;
         public bool FsGlow = true;
@@ -166,7 +166,6 @@ namespace NostalgiaPlus
                     FsAutoHide = true;
                     FsShowWaveform = true;
                     FsShowOverlays = true;
-                    FsShowGrid = true;
                     break;
 
                 default: // Studio
@@ -259,14 +258,11 @@ namespace NostalgiaPlus
                 s.FsShowOsd = ParseBool(map, "FsShowOsd", s.FsShowOsd);
                 s.BarSize = (int)ParseDouble(map, "BarSize", s.BarSize);
                 s.LedSegment = (int)ParseDouble(map, "LedSegment", s.LedSegment);
-                s.PanelCurveWidth = (int)ParseDouble(map, "PanelCurveWidth", s.PanelCurveWidth);
                 s.DockPanelHeight = (int)ParseDouble(map, "DockPanelHeight", s.DockPanelHeight);
                 s.Contrast = ParseDouble(map, "Contrast", s.Contrast);
-                s.FsCurveWidth = (int)ParseDouble(map, "FsCurveWidth", s.FsCurveWidth);
-                s.FsGutterWidth = (int)ParseDouble(map, "FsGutterWidth", s.FsGutterWidth);
+                s.GutterWidth = (int)ParseDouble(map, "GutterWidth", s.GutterWidth);
                 s.FsShowWaveform = ParseBool(map, "FsShowWaveform", s.FsShowWaveform);
                 s.FsShowOverlays = ParseBool(map, "FsShowOverlays", s.FsShowOverlays);
-                s.FsShowGrid = ParseBool(map, "FsShowGrid", s.FsShowGrid);
                 s.FsImmersive = ParseBool(map, "FsImmersive", s.FsImmersive);
                 s.FsGlow = ParseBool(map, "FsGlow", s.FsGlow);
                 s.FsAutoHide = ParseBool(map, "FsAutoHide", s.FsAutoHide);
@@ -334,14 +330,11 @@ namespace NostalgiaPlus
                 sb.AppendLine("FsShowOsd=" + FsShowOsd);
                 sb.AppendLine("BarSize=" + BarSize);
                 sb.AppendLine("LedSegment=" + LedSegment);
-                sb.AppendLine("PanelCurveWidth=" + PanelCurveWidth);
                 sb.AppendLine("DockPanelHeight=" + DockPanelHeight);
                 sb.AppendLine("Contrast=" + Inv(Contrast));
-                sb.AppendLine("FsCurveWidth=" + FsCurveWidth);
-                sb.AppendLine("FsGutterWidth=" + FsGutterWidth);
+                sb.AppendLine("GutterWidth=" + GutterWidth);
                 sb.AppendLine("FsShowWaveform=" + FsShowWaveform);
                 sb.AppendLine("FsShowOverlays=" + FsShowOverlays);
-                sb.AppendLine("FsShowGrid=" + FsShowGrid);
                 sb.AppendLine("FsImmersive=" + FsImmersive);
                 sb.AppendLine("FsGlow=" + FsGlow);
                 sb.AppendLine("FsAutoHide=" + FsAutoHide);

@@ -67,7 +67,7 @@ namespace NostalgiaPlus.Render
             bounds = new Rectangle(bounds.X + margin, bounds.Y,
                                    Math.Max(16, bounds.Width - 2 * margin), bounds.Height);
             int paneCount = SpectrumAnalyzer.PaneCount(s.PairMode);
-            int gutter = paneCount == 2 ? Math.Max(0, Math.Min(90, s.FsGutterWidth)) : 0;
+            int gutter = paneCount == 2 ? Math.Max(0, Math.Min(90, s.GutterWidth)) : 0;
 
             if (_panes.Length != paneCount)
             {

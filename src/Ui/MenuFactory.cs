@@ -82,7 +82,9 @@ namespace NostalgiaPlus.Ui
             var m = new ToolStripMenuItem("Preset");
             foreach (Preset p in Enum.GetValues(typeof(Preset)))
             {
-                if (p == Preset.Custom) continue;
+                // Immersive is reached through View, which applies this same preset;
+                // listing it here as well made it look like two different things.
+                if (p == Preset.Custom || p == Preset.Immersive) continue;
                 Preset captured = p;
                 var mi = new ToolStripMenuItem(p.ToString());
                 mi.Checked = s.Preset == p;
@@ -331,12 +333,8 @@ namespace NostalgiaPlus.Ui
         {
             var m = new ToolStripMenuItem("Axes and grid");
 
-            bool grid = o.IsFullscreen ? s.FsShowGrid : s.ShowGrid;
-            AddToggle(m.DropDownItems, "Gridlines  (G)", grid, delegate
-            {
-                if (o.IsFullscreen) s.FsShowGrid = !s.FsShowGrid; else s.ShowGrid = !s.ShowGrid;
-                o.Changed(false);
-            });
+            AddToggle(m.DropDownItems, "Gridlines  (G)", s.ShowGrid,
+                      delegate { s.ShowGrid = !s.ShowGrid; o.Changed(false); });
             AddToggle(m.DropDownItems, "Semitone gridlines", s.ShowSemitones,
                       delegate { s.ShowSemitones = !s.ShowSemitones; o.Changed(false); });
 

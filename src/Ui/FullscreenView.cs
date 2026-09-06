@@ -471,7 +471,7 @@ namespace NostalgiaPlus.Ui
             {
                 _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture,
                                  _settings.FsShowOverlays ? 84 : 0);
-                if (_settings.FsShowGrid && furniture > 0.004)
+                if (_settings.ShowGrid && furniture > 0.004)
                     _scope.DrawGrid(g, _settings, _fontTiny, furniture,
                                     _settings.FsShowOverlays ? 84 : 0);
                 _scope.DrawPaneLabels(g, _fontSmall, furniture, _settings.FsShowOverlays ? 84 : 0);
@@ -724,7 +724,7 @@ namespace NostalgiaPlus.Ui
                     _settings.FsShowOverlays = !_settings.FsShowOverlays;
                     OnSettingsChanged(false); return true;
                 case Keys.G:
-                    _settings.FsShowGrid = !_settings.FsShowGrid;
+                    _settings.ShowGrid = !_settings.ShowGrid;
                     OnSettingsChanged(false); return true;
                 case Keys.H:
                     _settings.FsShowOsd = !_settings.FsShowOsd;

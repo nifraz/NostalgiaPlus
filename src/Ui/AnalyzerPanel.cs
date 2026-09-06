@@ -176,8 +176,10 @@ namespace NostalgiaPlus.Ui
             {
                 _paused = false;
                 _fullscreen = null;
-                _scope.ResetPanes();
-                try { Invalidate(); } catch { }
+                // Both views share one Settings, so anything changed while fullscreen was
+                // up applies here too - including layout and palette. Only resetting the
+                // panes left the panel drawing with stale geometry until the next resize.
+                try { OnSettingsChanged(true); } catch { }
             };
             _fullscreen = view;
             _paused = true;
