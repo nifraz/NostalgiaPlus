@@ -23,6 +23,7 @@ class TestHarness
         TestUserPresets();
         TestSettingsPersistence();
         TestLayoutBudgets();
+        TestMusicFeatures();
         Console.WriteLine(_fail == 0 ? "\nALL CHECKS PASSED" : "\n" + _fail + " CHECK(S) FAILED");
         Environment.Exit(_fail == 0 ? 0 : 1);
     }
@@ -375,6 +376,97 @@ class TestHarness
         deck.Layout(new Rectangle(0, 0, 20, 110), wide);
         Check("no room at all leaves nothing placed",
               deck.GoniometerRect.Width == 0 && deck.StackRect.Width == 0, "");
+    }
+
+    /// <summary>
+    /// The features that drive the immersive reactions: onsets, tempo and brightness.
+    ///
+    /// Driven with a synthetic spectrum rather than audio, because that is exactly what
+    /// the detector sees - a dB array per frame - and it makes the expected answer
+    /// arithmetic rather than a judgement call.
+    /// </summary>
+    static void TestMusicFeatures()
+    {
+        Console.WriteLine("[music features]");
+        const int Bins = 256;
+        const double Fps = 60.0;
+        const double Dt = 1.0 / Fps;
+
+        // --- onsets and tempo: a 120 BPM click, one loud frame every half second ---
+        var f = new MusicFeatures();
+        var db = new double[Bins];
+        int hitEvery = (int)(Fps * 0.5);
+        int onsets = 0, framesOnBeat = 0;
+        for (int frame = 0; frame < 900; frame++)          // 15 seconds
+        {
+            bool hit = frame % hitEvery == 0;
+            for (int i = 0; i < Bins; i++) db[i] = hit ? -30.0 : -75.0;
+            f.Update(db, Bins, Dt);
+            if (f.Onset)
+            {
+                onsets++;
+                if (frame % hitEvery == 0) framesOnBeat++;
+            }
+        }
+        Check("fires roughly one onset per click", onsets >= 25 && onsets <= 32,
+              onsets + " onsets for 30 clicks");
+        Check("every onset lands on a click", framesOnBeat == onsets,
+              framesOnBeat + " of " + onsets + " on the beat");
+        Check("finds 120 BPM", Math.Abs(f.Bpm - 120.0) < 4.0, f.Bpm.ToString("0.0") + " BPM");
+
+        // --- the pulse decays between hits and is not simply always on ---
+        double afterHit = 0, beforeNext = 0;
+        for (int frame = 0; frame < hitEvery; frame++)
+        {
+            bool hit = frame == 0;
+            for (int i = 0; i < Bins; i++) db[i] = hit ? -30.0 : -75.0;
+            f.Update(db, Bins, Dt);
+            if (frame == 0) afterHit = f.Pulse;
+            beforeNext = f.Pulse;
+        }
+        Check("the pulse peaks at the hit", afterHit > 0.9, afterHit.ToString("0.00"));
+        // Checked against the decay curve rather than a round number, so changing the
+        // constant fails here instead of quietly changing how a beat reads.
+        double elapsed = (hitEvery - 1) / Fps;
+        double expected = Math.Exp(-elapsed / f.PulseDecaySeconds);
+        Check("and is well down before the next", beforeNext < 0.12,
+              beforeNext.ToString("0.000") + " after " + elapsed.ToString("0.00") + "s");
+        Check("following the stated decay", Math.Abs(beforeNext - expected) < 0.02,
+              "expected " + expected.ToString("0.000"));
+
+        // --- a steady tone produces no onsets after the first ---
+        var g = new MusicFeatures();
+        int steady = 0;
+        for (int frame = 0; frame < 300; frame++)
+        {
+            for (int i = 0; i < Bins; i++) db[i] = -40.0;
+            g.Update(db, Bins, Dt);
+            if (f.Onset && frame > 10) steady++;
+        }
+        Check("silence between hits triggers nothing", steady == 0, steady + " spurious");
+        Check("and no tempo is claimed", g.Bpm == 0, g.Bpm.ToString("0.0"));
+
+        // --- centroid follows where the energy actually is ---
+        var lowF = new MusicFeatures();
+        var highF = new MusicFeatures();
+        var low = new double[Bins];
+        var high = new double[Bins];
+        for (int i = 0; i < Bins; i++)
+        {
+            low[i] = i < Bins / 8 ? -20.0 : SpectrumAnalyzer.FloorDb;
+            high[i] = i > Bins * 7 / 8 ? -20.0 : SpectrumAnalyzer.FloorDb;
+        }
+        for (int frame = 0; frame < 300; frame++)
+        {
+            lowF.Update(low, Bins, Dt);
+            highF.Update(high, Bins, Dt);
+        }
+        Check("bass-only reads low on the axis", lowF.Centroid < 0.2,
+              lowF.Centroid.ToString("0.00"));
+        Check("treble-only reads high on the axis", highF.Centroid > 0.8,
+              highF.Centroid.ToString("0.00"));
+        Check("the two are far apart", highF.Centroid - lowF.Centroid > 0.6,
+              (highF.Centroid - lowF.Centroid).ToString("0.00"));
     }
 
     static void TestUserPresets()
