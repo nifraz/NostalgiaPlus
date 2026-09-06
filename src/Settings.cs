@@ -113,6 +113,11 @@ namespace NostalgiaPlus
         /// </summary>
         public bool ReserveScaleSpace = true;
         public ScaleLanePosition ScaleLanePos = ScaleLanePosition.Top;
+        /// <summary>
+        /// Name each scale's unit once, at the end it is measured from. Without it the
+        /// axes are bare numbers: -48 could be anything, and 8k could be a sample count.
+        /// </summary>
+        public bool ShowScaleUnits = true;
 
         // --- centre deck (fullscreen) ---
         /// <summary>
@@ -452,6 +457,7 @@ namespace NostalgiaPlus
                 s.QuickBarCompact = ParseBool(map, "QuickBarCompact", s.QuickBarCompact);
                 s.ReserveScaleSpace = ParseBool(map, "ReserveScaleSpace", s.ReserveScaleSpace);
                 s.ScaleLanePos = ParseEnum(map, "ScaleLanePos", s.ScaleLanePos);
+                s.ShowScaleUnits = ParseBool(map, "ShowScaleUnits", s.ShowScaleUnits);
                 s.ShowCenterDeck = ParseBool(map, "ShowCenterDeck", s.ShowCenterDeck);
                 s.DeckShowGoniometer = ParseBool(map, "DeckShowGoniometer", s.DeckShowGoniometer);
                 s.DeckShowMeters = ParseBool(map, "DeckShowMeters", s.DeckShowMeters);
@@ -536,6 +542,7 @@ namespace NostalgiaPlus
                 sb.AppendLine("QuickBarCompact=" + QuickBarCompact);
                 sb.AppendLine("ReserveScaleSpace=" + ReserveScaleSpace);
                 sb.AppendLine("ScaleLanePos=" + ScaleLanePos);
+                sb.AppendLine("ShowScaleUnits=" + ShowScaleUnits);
                 sb.AppendLine("ShowCenterDeck=" + ShowCenterDeck);
                 sb.AppendLine("DeckShowGoniometer=" + DeckShowGoniometer);
                 sb.AppendLine("DeckShowMeters=" + DeckShowMeters);

@@ -363,8 +363,25 @@ namespace NostalgiaPlus.Render
         /// Paints the reserved scale strip's ground. Drawn before the scales themselves
         /// so their labels sit on a flat surface rather than on the spectrogram.
         /// </summary>
+        // Space claimed by the unit captions, so the numeric labels can step around
+        // them instead of printing on top.
+        private RectangleF _dbUnit, _timeUnit;
+
         public void DrawScaleLane(Graphics g, double alpha)
         {
+            DrawScaleLane(g, alpha, null, null, null);
+        }
+
+        /// <summary>
+        /// Paints the scale strip and names each scale's unit at the end it is measured
+        /// from: level from the graph's baseline, time from the live edge. Either name
+        /// may be null to leave that scale unlabelled.
+        /// </summary>
+        public void DrawScaleLane(Graphics g, double alpha, Font font,
+                                  string levelUnit, string timeUnit)
+        {
+            _dbUnit = RectangleF.Empty;
+            _timeUnit = RectangleF.Empty;
             if (LaneRect.Height <= 0 || alpha <= 0.004) return;
             using (var bg = new SolidBrush(Color.FromArgb((int)(255 * alpha), 13, 13, 16)))
                 g.FillRectangle(bg, LaneRect);
@@ -373,6 +390,30 @@ namespace NostalgiaPlus.Render
             int edge = LaneAtTop ? LaneRect.Bottom - 1 : LaneRect.Top;
             using (var line = new Pen(Color.FromArgb((int)(60 * alpha), 255, 255, 255)))
                 g.DrawLine(line, LaneRect.Left, edge, LaneRect.Right - 1, edge);
+
+            if (font == null) return;
+            using (var unit = new SolidBrush(Color.FromArgb((int)(190 * alpha), 150, 200, 245)))
+            {
+                // Level is measured from the baseline the bars grow out of, so its name
+                // goes there; time is counted back from the live edge, so its name goes
+                // against the newest column.
+                if (levelUnit != null && CurveRect.Width >= 40)
+                {
+                    SizeF sz = g.MeasureString(levelUnit, font);
+                    float x = CurveOnLeft ? CurveRect.Left + 2 : CurveRect.Right - sz.Width - 2;
+                    float y = LaneTextY(sz);
+                    g.DrawString(levelUnit, font, unit, x, y);
+                    _dbUnit = new RectangleF(x - 3, y, sz.Width + 6, sz.Height);
+                }
+                if (timeUnit != null && SpectroRect.Width >= 60)
+                {
+                    SizeF sz = g.MeasureString(timeUnit, font);
+                    float x = CurveOnLeft ? SpectroRect.Left + 2 : SpectroRect.Right - sz.Width - 2;
+                    float y = LaneTextY(sz);
+                    g.DrawString(timeUnit, font, unit, x, y);
+                    _timeUnit = new RectangleF(x - 3, y, sz.Width + 6, sz.Height);
+                }
+            }
         }
 
         private bool LaneAtTop { get { return LaneRect.Top <= Bounds.Top; } }
@@ -393,10 +434,18 @@ namespace NostalgiaPlus.Render
                              : LaneRect.Top + len + (free - sz.Height) / 2f;
         }
 
-        /// <summary>dB step chosen so the strip carries roughly four to six lines.</summary>
-        private static double DbStep(double span)
+        /// <summary>
+        /// dB step chosen so the labels land roughly 55px apart. A fixed step gave a
+        /// 45%-wide graph the same four labels as a narrow one, which wastes most of
+        /// the space it was given.
+        /// </summary>
+        private static double DbStep(double span, int pixels)
         {
-            return span > 80 ? 20 : (span > 40 ? 12 : 6);
+            double[] steps = { 3, 6, 12, 20, 30, 40 };
+            if (pixels <= 0 || span <= 0) return 12;
+            for (int i = 0; i < steps.Length; i++)
+                if (pixels * steps[i] / span >= 55.0) return steps[i];
+            return steps[steps.Length - 1];
         }
 
         private void DrawBackground(Graphics g, double floorDb, double ceilDb, double span,
@@ -419,7 +468,7 @@ namespace NostalgiaPlus.Render
             }
             if (o.Background == GraphBackground.Plain) return;
 
-            double step = DbStep(span);
+            double step = DbStep(span, CurveRect.Width);
             bool labels = o.ShowDbScale && o.LabelFont != null &&
                           CurveRect.Width >= (LaneRect.Height > 0 ? 34 : 58);
 
@@ -447,7 +496,11 @@ namespace NostalgiaPlus.Render
                             LaneTick(out t0, out t1);
                             using (var tick = new Pen(Color.FromArgb((int)(110 * o.Alpha), 255, 255, 255)))
                                 g.DrawLine(tick, x, t0, x, t1);
-                            g.DrawString(t, o.LabelFont, brush, lx, LaneTextY(sz));
+                            // The unit caption owns its corner; a number printed over it
+                            // would read as neither.
+                            if (_dbUnit.Width == 0 ||
+                                lx + sz.Width < _dbUnit.Left || lx > _dbUnit.Right)
+                                g.DrawString(t, o.LabelFont, brush, lx, LaneTextY(sz));
                         }
                         else
                         {
@@ -482,13 +535,12 @@ namespace NostalgiaPlus.Render
         {
             if (rowsPerSecond <= 0 || SpectroRect.Width < 40 || font == null) return;
             double visible = SpectroRect.Width / rowsPerSecond;
-            double step = 1;
+            // Aim for a mark every 85px or so rather than a fixed count: a 1900px
+            // spectrogram and a 300px one should not carry the same seven labels.
+            double step = 120;
             double[] choices = { 1, 2, 5, 10, 15, 30, 60, 120 };
             for (int i = 0; i < choices.Length; i++)
-            {
-                step = choices[i];
-                if (visible / step <= 7) break;
-            }
+                if (choices[i] * rowsPerSecond >= 85.0) { step = choices[i]; break; }
 
             using (var pen = new Pen(Color.FromArgb((int)(30 * alpha), 255, 255, 255)))
             using (var brush = new SolidBrush(Color.FromArgb((int)(215 * alpha), 235, 235, 242)))
@@ -510,7 +562,9 @@ namespace NostalgiaPlus.Render
                         int t0, t1;
                         LaneTick(out t0, out t1);
                         g.DrawLine(tickPen, x, t0, x, t1);
-                        g.DrawString(label, font, brush, lx, LaneTextY(sz));
+                        if (_timeUnit.Width == 0 ||
+                            lx + sz.Width < _timeUnit.Left || lx > _timeUnit.Right)
+                            g.DrawString(label, font, brush, lx, LaneTextY(sz));
                     }
                     else
                     {

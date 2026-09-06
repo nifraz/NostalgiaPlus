@@ -200,9 +200,15 @@ namespace NostalgiaPlus.Render
 
             double rowsPerSecond = (double)s.TargetFps / Math.Max(1, s.ScrollDivider);
 
+            // dBFS rather than dB: these are magnitudes against full scale, and saying
+            // so is the difference between a number you can compare across tracks and
+            // one you cannot.
+            string levelUnit = s.ShowScaleUnits && s.ShowDbScale ? "dBFS" : null;
+            string timeUnit = s.ShowScaleUnits && s.ShowTimeMarks ? "now" : null;
+
             for (int i = 0; i < _panes.Length; i++)
             {
-                _panes[i].DrawScaleLane(g, alpha);
+                _panes[i].DrawScaleLane(g, alpha, labelFont, levelUnit, timeUnit);
                 _panes[i].DrawSpectrogram(g, _lut, glow);
                 if (s.ShowTimeMarks && alpha > 0.004)
                     _panes[i].DrawTimeMarks(g, labelFont, rowsPerSecond, alpha, topInset);
@@ -224,10 +230,21 @@ namespace NostalgiaPlus.Render
 
             int h = _panes[0].SpectroRect.Height;
             int top = _panes[0].SpectroRect.Top;
-
             if (GutterRect.Width > 0)
                 using (var bg = new SolidBrush(FadeColor(Color.FromArgb(255, 12, 12, 15), alpha)))
                     g.FillRectangle(bg, GutterRect);
+
+            // After the gutter is filled, not before: the fill covers the whole column
+            // and was painting over the caption.
+            int unitFloor = 0;
+            if (showLabels && s.ShowScaleUnits)
+            {
+                DrawAxisUnit(g, s, labelFont, alpha, top);
+                // With no strip the caption sits on the axis itself, so the rows have to
+                // start below it.
+                if (_panes[0].LaneRect.Height == 0 && labelFont != null)
+                    unitFloor = labelFont.Height + 2;
+            }
 
             // Semitone lines only once there is room for them to read as lines.
             if (s.ShowSemitones && _map.Scale != FreqScale.Linear)
@@ -267,8 +284,9 @@ namespace NostalgiaPlus.Render
                     SizeF sz = g.MeasureString(primary, labelFont);
                     float lineH = sz.Height - 2;
                     // Keep the text beside its own row rather than letting the topmost
-                    // one ride up into the scale strip.
-                    float ly = Math.Max(top, y - 13);
+                    // one ride up into the scale strip, and clear of the unit caption
+                    // when that is sitting at the top of the axis instead.
+                    float ly = Math.Max(top + unitFloor, y - 13);
 
                     if (GutterRect.Width >= 22)
                     {
@@ -301,6 +319,40 @@ namespace NostalgiaPlus.Render
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Names the frequency axis at the top of every column that carries it. Sits in
+        /// the scale strip when there is one, and on a chip at the top of the axis when
+        /// there is not - the unit should not vanish just because the strip is off.
+        /// </summary>
+        private void DrawAxisUnit(Graphics g, Settings s, Font font, double alpha, int axisTop)
+        {
+            if (font == null || alpha <= 0.004) return;
+            string unit = s.LabelMode == AxisLabelMode.Notes && _map.Scale != FreqScale.Linear
+                        ? "note" : "Hz";
+            SizeF sz = g.MeasureString(unit, font);
+
+            Rectangle lane = _panes[0].LaneRect;
+            bool inLane = lane.Height >= sz.Height;
+            float y = inLane ? lane.Top + (lane.Height - sz.Height) / 2f : axisTop + 1;
+
+            using (var chip = new SolidBrush(FadeColor(Color.FromArgb(190, 8, 8, 11), alpha)))
+            using (var ink = new SolidBrush(FadeColor(Color.FromArgb(190, 150, 200, 245), alpha)))
+            {
+                DrawUnitIn(g, GutterRect, unit, font, sz, y, inLane, chip, ink);
+                DrawUnitIn(g, OuterLeftRect, unit, font, sz, y, inLane, chip, ink);
+                DrawUnitIn(g, OuterRightRect, unit, font, sz, y, inLane, chip, ink);
+            }
+        }
+
+        private static void DrawUnitIn(Graphics g, Rectangle column, string unit, Font font,
+                                       SizeF sz, float y, bool inLane, Brush chip, Brush ink)
+        {
+            if (column.Width < sz.Width + 2) return;
+            float x = column.Left + (column.Width - sz.Width) / 2f;
+            if (!inLane) g.FillRectangle(chip, x - 2, y - 1, sz.Width + 4, sz.Height + 1);
+            g.DrawString(unit, font, ink, x, y);
         }
 
         public void DrawPaneLabels(Graphics g, Font font, double alpha, int yOffset)
@@ -412,10 +464,14 @@ namespace NostalgiaPlus.Render
             }
         }
 
+        /// <summary>
+        /// One style for the whole axis. The old rule switched decimals at 10 kHz, so a
+        /// linear axis read "8.0k" next to "22k" - two conventions in one column, which
+        /// reads as an inconsistency rather than as precision.
+        /// </summary>
         private static string FormatShortHz(double f)
         {
-            if (f >= 10000) return (f / 1000.0).ToString("0") + "k";
-            if (f >= 1000) return (f / 1000.0).ToString("0.0") + "k";
+            if (f >= 1000) return (f / 1000.0).ToString("0.#") + "k";
             return f.ToString("0");
         }
 

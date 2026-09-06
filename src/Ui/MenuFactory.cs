@@ -717,8 +717,17 @@ namespace NostalgiaPlus.Ui
             lane.Enabled = s.ReserveScaleSpace;
             m.DropDownItems.Add(lane);
 
+            AddToggle(m.DropDownItems, "Scale units",
+                      "Name each scale's unit once, at the end it is measured from:\n"
+                      + "dBFS at the graph's baseline, \"now\" at the spectrogram's live\n"
+                      + "edge, and Hz or note at the top of the frequency axis. Without\n"
+                      + "them the axes are bare numbers.",
+                      s.ShowScaleUnits,
+                      delegate { s.ShowScaleUnits = !s.ShowScaleUnits; o.Changed(false); });
             AddToggle(m.DropDownItems, "dB scale on graphs",
-                      "Level numbers along the graph strips.",
+                      "Level numbers along the graph strips, in dBFS - decibels relative\n"
+                      + "to full scale, so 0 is the loudest a sample can be. Label density\n"
+                      + "follows the graph's width.",
                       s.ShowDbScale, delegate { s.ShowDbScale = !s.ShowDbScale; o.Changed(false); });
             AddToggle(m.DropDownItems, "Time markers on spectrograms",
                       "How many seconds ago each column was. Counted away from the graph,\n"
