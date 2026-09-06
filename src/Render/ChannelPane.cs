@@ -457,6 +457,21 @@ namespace NostalgiaPlus.Render
             else { y0 = LaneRect.Top; y1 = LaneRect.Top + len; }
         }
 
+        /// <summary>
+        /// Whether a label may occupy this span of the strip.
+        ///
+        /// Both unit captions are checked, not just the one belonging to this scale: the
+        /// graph and the spectrogram meet in the middle of the pane, so the level
+        /// scale's first number lands right beside the time scale's "now" - and "now -18"
+        /// reads as one thing rather than as two labels from two different rulers.
+        /// </summary>
+        private bool LaneFree(float x0, float x1)
+        {
+            if (_dbUnit.Width > 0 && x1 > _dbUnit.Left && x0 < _dbUnit.Right) return false;
+            if (_timeUnit.Width > 0 && x1 > _timeUnit.Left && x0 < _timeUnit.Right) return false;
+            return true;
+        }
+
         private float LaneTextY(SizeF sz)
         {
             int len = Math.Max(3, LaneRect.Height / 4);
@@ -529,10 +544,9 @@ namespace NostalgiaPlus.Render
                             LaneTick(out t0, out t1);
                             using (var tick = new Pen(Color.FromArgb((int)(110 * o.Alpha), lineC)))
                                 g.DrawLine(tick, x, t0, x, t1);
-                            // The unit caption owns its corner; a number printed over it
-                            // would read as neither.
-                            if (_dbUnit.Width == 0 ||
-                                lx + sz.Width < _dbUnit.Left || lx > _dbUnit.Right)
+                            // The unit captions own their corners; a number printed
+                            // beside one would read as part of it.
+                            if (LaneFree(lx - 4, lx + sz.Width + 4))
                                 g.DrawString(t, o.LabelFont, brush, lx, LaneTextY(sz));
                         }
                         else
@@ -597,8 +611,7 @@ namespace NostalgiaPlus.Render
                         int t0, t1;
                         LaneTick(out t0, out t1);
                         g.DrawLine(tickPen, x, t0, x, t1);
-                        if (_timeUnit.Width == 0 ||
-                            lx + sz.Width < _timeUnit.Left || lx > _timeUnit.Right)
+                        if (LaneFree(lx - 4, lx + sz.Width + 4))
                             g.DrawString(label, font, brush, lx, LaneTextY(sz));
                     }
                     else

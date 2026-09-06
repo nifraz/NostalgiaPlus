@@ -93,7 +93,44 @@ namespace NostalgiaPlus.Ui
 
             // A submenu does not inherit the context menu's tooltip setting, so every
             // dropdown has to be told separately or its items stay silent.
+            menu.ShowItemToolTips = true;
             EnableTips(menu.Items);
+
+            // Removing a handler that is not attached is a no-op, so this stays a single
+            // subscription however many times the menu is opened.
+            menu.Closed -= DismissTips;
+            menu.Closed += DismissTips;
+        }
+
+        /// <summary>
+        /// Hides any tooltip still on screen when the menu closes.
+        ///
+        /// A ToolStrip tooltip is a window of its own, dismissed when the pointer leaves
+        /// the item. Clicking an item that changes the view - going fullscreen, most
+        /// visibly - tears the menu down while the tooltip is still up, and nothing is
+        /// left to dismiss it: it stays floating over the new window until something
+        /// else repaints that part of the screen. Turning the setting off makes the
+        /// ToolStrip drop its tooltip immediately, and Populate turns it back on the
+        /// next time the menu opens.
+        /// </summary>
+        private static readonly ToolStripDropDownClosedEventHandler DismissTips =
+            delegate(object sender, ToolStripDropDownClosedEventArgs e)
+            {
+                var strip = sender as ToolStrip;
+                if (strip == null) return;
+                strip.ShowItemToolTips = false;
+                DisableTips(strip.Items);
+            };
+
+        private static void DisableTips(ToolStripItemCollection items)
+        {
+            foreach (ToolStripItem it in items)
+            {
+                var mi = it as ToolStripMenuItem;
+                if (mi == null || !mi.HasDropDownItems) continue;
+                mi.DropDown.ShowItemToolTips = false;
+                DisableTips(mi.DropDownItems);
+            }
         }
 
         private static void EnableTips(ToolStripItemCollection items)
