@@ -40,7 +40,15 @@ namespace NostalgiaPlus.Render
     public sealed class ChannelPane : IDisposable
     {
         private ColumnSpectrogram _sg;
-        private Bitmap _off, _glow;
+        private Bitmap _glowSrc, _glow;
+        // Graphics contexts are tied to their bitmap and cost real time to construct;
+        // four per frame showed up as both cost and frame-to-frame jitter.
+        private Graphics _glowSrcG, _glowG;
+        private ImageAttributes _glowAttr;
+        // Reused every frame: at 1080 rows these were ~9 KB allocations per trace per
+        // pane per frame, which is pure GC pressure on the UI thread.
+        private PointF[] _curveBuf = new PointF[0];
+        private PointF[] _traceBuf = new PointF[0];
 
         private double[] _raw = new double[0];      // straight from the analyser
         private double[] _shaped = new double[0];   // after smoothing
@@ -104,8 +112,11 @@ namespace NostalgiaPlus.Render
 
         private void DisposeOffscreen()
         {
-            if (_off != null) { _off.Dispose(); _off = null; }
+            if (_glowSrcG != null) { _glowSrcG.Dispose(); _glowSrcG = null; }
+            if (_glowG != null) { _glowG.Dispose(); _glowG = null; }
+            if (_glowSrc != null) { _glowSrc.Dispose(); _glowSrc = null; }
             if (_glow != null) { _glow.Dispose(); _glow = null; }
+            if (_glowAttr != null) { _glowAttr.Dispose(); _glowAttr = null; }
         }
 
         public void Reset(int[] lut)
@@ -164,51 +175,57 @@ namespace NostalgiaPlus.Render
 
             // Newest sits against the curve: on the far side when the curve is on the left.
             bool newestOnRight = !CurveOnLeft;
+            _sg.Draw(g, SpectroRect, newestOnRight);
+            if (!glow) return;
 
-            if (!glow)
-            {
-                _sg.Draw(g, SpectroRect, newestOnRight);
-                return;
-            }
-
-            if (_off == null || _off.Width != SpectroRect.Width || _off.Height != SpectroRect.Height)
-            {
-                if (_off != null) _off.Dispose();
-                _off = new Bitmap(SpectroRect.Width, SpectroRect.Height, PixelFormat.Format32bppPArgb);
-            }
-            using (var go = Graphics.FromImage(_off))
-            {
-                go.Clear(Palette.Background(lut));
-                _sg.Draw(go, new Rectangle(0, 0, SpectroRect.Width, SpectroRect.Height), newestOnRight);
-            }
-            g.DrawImageUnscaled(_off, SpectroRect.X, SpectroRect.Y);
-
+            // The bloom source is drawn straight into a small bitmap rather than
+            // compositing at full size and downscaling afterwards. A high-quality
+            // downscale costs in proportion to *source* pixels, and measured at roughly
+            // two thirds of all paint time; scaling on the way in costs destination
+            // pixels instead. Aliasing from the cheap filter is irrelevant because the
+            // result is deliberately blurred on the way back up.
             int gw = Math.Max(8, SpectroRect.Width / 8);
             int gh = Math.Max(8, SpectroRect.Height / 8);
             if (_glow == null || _glow.Width != gw || _glow.Height != gh)
             {
+                if (_glowSrcG != null) _glowSrcG.Dispose();
+                if (_glowG != null) _glowG.Dispose();
+                if (_glowSrc != null) _glowSrc.Dispose();
                 if (_glow != null) _glow.Dispose();
+                _glowSrc = new Bitmap(gw, gh, PixelFormat.Format32bppPArgb);
                 _glow = new Bitmap(gw, gh, PixelFormat.Format32bppArgb);
+                _glowSrcG = Graphics.FromImage(_glowSrc);
+                _glowSrcG.CompositingMode = CompositingMode.SourceCopy;
+                _glowG = Graphics.FromImage(_glow);
+                _glowG.CompositingMode = CompositingMode.SourceCopy;
             }
-            using (var gg = Graphics.FromImage(_glow))
-            using (var attr = new ImageAttributes())
+
+            // 1. ring straight into a small bitmap - destination-sized work
+            _glowSrcG.Clear(Palette.Background(lut));
+            _sg.Draw(_glowSrcG, new Rectangle(0, 0, gw, gh), newestOnRight,
+                     System.Drawing.Drawing2D.InterpolationMode.Bilinear);
+
+            if (_glowAttr == null)
             {
-                gg.CompositingMode = CompositingMode.SourceCopy;
-                gg.Clear(Color.Transparent);
-                // RGB boosted, alpha taken from luminance with a threshold, so only bright
-                // material contributes and dark areas are left untouched.
-                var m = new ColorMatrix(new float[][] {
+                _glowAttr = new ImageAttributes();
+                _glowAttr.SetColorMatrix(new ColorMatrix(new float[][] {
                     new float[] { 1.6f, 0,    0,    0.55f, 0 },
                     new float[] { 0,    1.6f, 0,    0.55f, 0 },
                     new float[] { 0,    0,    1.6f, 0.55f, 0 },
                     new float[] { 0,    0,    0,    0f,    0 },
                     new float[] { 0,    0,    0,   -0.38f, 1 }
-                });
-                attr.SetColorMatrix(m);
-                gg.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBilinear;
-                gg.DrawImage(_off, new Rectangle(0, 0, gw, gh),
-                             0, 0, _off.Width, _off.Height, GraphicsUnit.Pixel, attr);
+                }));
             }
+
+            // 2. threshold and luminance-to-alpha while the image is still small. Doing
+            // this during the upscale instead costs a matrix multiply per *destination*
+            // pixel - around 800k per pane per frame - and measured as the bulk of the
+            // remaining bloom cost.
+            _glowG.Clear(Color.Transparent);
+            _glowG.DrawImage(_glowSrc, new Rectangle(0, 0, gw, gh),
+                             0, 0, gw, gh, GraphicsUnit.Pixel, _glowAttr);
+
+            // 3. plain upscale: one blit, no per-pixel maths
             var old = g.InterpolationMode;
             g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.Bilinear;
             g.DrawImage(_glow, SpectroRect, 0, 0, gw, gh, GraphicsUnit.Pixel);
@@ -241,12 +258,18 @@ namespace NostalgiaPlus.Render
             else
                 DrawBarStyle(g, baseX, dir, amp, floorDb, span, lut, o.Style, o.BarSize, o.LedSegment);
 
-            if (o.ShowMax) DrawTrace(g, _ext.Max, baseX, dir, amp, floorDb, span,
-                                     Color.FromArgb(180, 255, 255, 255));
-            if (o.ShowAvg) DrawTrace(g, _ext.Average, baseX, dir, amp, floorDb, span,
-                                     Color.FromArgb(170, 130, 200, 255));
-            if (o.ShowMin) DrawTrace(g, _ext.Min, baseX, dir, amp, floorDb, span,
-                                     Color.FromArgb(140, 120, 120, 140));
+            // Reference traces are thin and static; antialiasing a polyline with one
+            // point per pixel row costs several milliseconds per frame for no real gain.
+            if (o.ShowMax || o.ShowAvg || o.ShowMin)
+            {
+                g.SmoothingMode = SmoothingMode.None;
+                if (o.ShowMax) DrawTrace(g, _ext.Max, baseX, dir, amp, floorDb, span,
+                                         Color.FromArgb(180, 255, 255, 255));
+                if (o.ShowAvg) DrawTrace(g, _ext.Average, baseX, dir, amp, floorDb, span,
+                                         Color.FromArgb(170, 130, 200, 255));
+                if (o.ShowMin) DrawTrace(g, _ext.Min, baseX, dir, amp, floorDb, span,
+                                         Color.FromArgb(140, 120, 120, 140));
+            }
 
             g.SmoothingMode = old;
         }
@@ -363,7 +386,8 @@ namespace NostalgiaPlus.Render
                                    double floorDb, double span, Color hi, Color lo, bool solidFill)
         {
             int n = _display.Length;
-            var pts = new PointF[n + 2];
+            if (_curveBuf.Length < n + 2) _curveBuf = new PointF[n + 2];
+            PointF[] pts = _curveBuf;
             for (int y = 0; y < n; y++)
             {
                 int i = n - 1 - y;      // top of the pane is the highest frequency
@@ -385,10 +409,8 @@ namespace NostalgiaPlus.Render
                         g.FillPath(fill, path);
                 }
 
-            var line = new PointF[n];
-            Array.Copy(pts, line, n);
             using (var pen = new Pen(Color.FromArgb(235, hi), 1.3f))
-                g.DrawLines(pen, line);
+                g.DrawLines(pen, SubArray(pts, n));
         }
 
         private void DrawBarStyle(Graphics g, int baseX, int dir, float amp,
@@ -440,7 +462,8 @@ namespace NostalgiaPlus.Render
         {
             int n = Math.Min(values.Length, _display.Length);
             if (n < 2) return;
-            var pts = new PointF[n];
+            if (_traceBuf.Length < n) _traceBuf = new PointF[n];
+            PointF[] pts = _traceBuf;
             for (int y = 0; y < n; y++)
             {
                 int i = n - 1 - y;
@@ -448,7 +471,17 @@ namespace NostalgiaPlus.Render
                                     CurveRect.Y + y);
             }
             using (var pen = new Pen(colour, 1f))
-                g.DrawLines(pen, pts);
+                g.DrawLines(pen, SubArray(pts, n));
+        }
+
+        private PointF[] _exact = new PointF[0];
+
+        /// <summary>DrawLines needs an exactly sized array; this keeps one around.</summary>
+        private PointF[] SubArray(PointF[] src, int n)
+        {
+            if (_exact.Length != n) _exact = new PointF[n];
+            Array.Copy(src, _exact, n);
+            return _exact;
         }
 
         public void Dispose()

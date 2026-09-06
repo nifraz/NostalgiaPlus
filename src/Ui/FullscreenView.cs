@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -435,6 +436,10 @@ namespace NostalgiaPlus.Ui
 
         private void PaintFrame(Graphics g)
         {
+            // GDI+ antialiased text is by far the most expensive thing drawn per frame
+            // once the spectrogram is a blit. Grid-fit rendering is several times faster
+            // and, at these sizes on a dark ground, indistinguishable.
+            g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
             g.Clear(Palette.Background(_lut));
             double furniture = FurnitureAlpha();
             if (furniture <= 0.001 && !_cursorHidden)
@@ -490,19 +495,31 @@ namespace NostalgiaPlus.Ui
             }
         }
 
+        private PointF[] _wavePoly = new PointF[0];
+
         private void DrawWave(Graphics g, Pen pen, WaveformRing ring, Rectangle r,
                               int midY, float half, bool curveOnLeft)
         {
             if (ring == null || r.Width <= 0) return;
             // Match the spectrogram above: newest sits against that pane's curve.
             bool newestOnRight = !curveOnLeft;
-            for (int a = 0; a < r.Width; a++)
+            int w = r.Width;
+
+            // One filled polygon rather than a DrawLine per column: the per-column loop
+            // was around 900 GDI+ calls per pane per frame.
+            // Exact size: FillPolygon takes the whole array, so a "grow only" buffer
+            // would force a copy into a fresh one every frame and undo the reuse.
+            if (_wavePoly.Length != w * 2) _wavePoly = new PointF[w * 2];
+            for (int a = 0; a < w; a++)
             {
                 int x = newestOnRight ? r.Right - 1 - a : r.X + a;
                 float lo, hi;
                 ring.Get(a, out lo, out hi);
-                g.DrawLine(pen, x, midY - hi * half, x, midY - lo * half);
+                _wavePoly[a] = new PointF(x, midY - hi * half);
+                _wavePoly[w * 2 - 1 - a] = new PointF(x, midY - lo * half);
             }
+            using (var brush = new SolidBrush(pen.Color))
+                g.FillPolygon(brush, _wavePoly);
         }
 
         private void DrawButtons(Graphics g, double alpha)

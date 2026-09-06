@@ -1,6 +1,7 @@
 using System;
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Windows.Forms;
@@ -41,6 +42,8 @@ namespace NostalgiaPlus.Ui
         private int _mouseX = -1, _mouseY = -1;
         private bool _mouseIn;
         private FullscreenView _fullscreen;
+        private Bitmap _barCache;
+        private int[] _barCacheLut;
 
         /// <summary>Supplies {title, artist, album} for the fullscreen overlay.</summary>
         public NowPlayingProvider NowPlaying { get; set; }
@@ -135,6 +138,7 @@ namespace NostalgiaPlus.Ui
             {
                 StopCapture();
                 _scope.Dispose();
+                if (_barCache != null) { _barCache.Dispose(); _barCache = null; }
                 if (_font != null) _font.Dispose();
                 if (_fontSmall != null) _fontSmall.Dispose();
             }
@@ -243,6 +247,7 @@ namespace NostalgiaPlus.Ui
         protected override void OnPaint(PaintEventArgs e)
         {
             Graphics g = e.Graphics;
+            g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
             g.Clear(Palette.Background(_lut));
 
             lock (_gate)
@@ -268,12 +273,20 @@ namespace NostalgiaPlus.Ui
 
             int barX = r.Left + 5, barW = 11, top = r.Top + 12, bot = r.Bottom - 12;
             if (bot <= top) return;
-            for (int y = top; y < bot; y++)
+
+            // The ramp only changes when the palette or the height does, so render it
+            // once instead of allocating a brush and filling a rectangle per pixel row.
+            int barH = bot - top;
+            if (_barCache == null || _barCache.Height != barH || _barCacheLut != _lut)
             {
-                double t = 1.0 - (double)(y - top) / (bot - top);
-                using (var b = new SolidBrush(Palette.ColorAt(_lut, t)))
-                    g.FillRectangle(b, barX, y, barW, 1);
+                if (_barCache != null) _barCache.Dispose();
+                _barCache = new Bitmap(1, barH);
+                for (int y = 0; y < barH; y++)
+                    _barCache.SetPixel(0, y, Palette.ColorAt(_lut, 1.0 - (double)y / barH));
+                _barCacheLut = _lut;
             }
+            g.DrawImage(_barCache, new Rectangle(barX, top, barW, barH),
+                        0, 0, 1, barH, GraphicsUnit.Pixel);
             using (var outline = new Pen(Color.FromArgb(60, 255, 255, 255)))
                 g.DrawRectangle(outline, barX, top, barW, bot - top);
             using (var brush = new SolidBrush(Color.FromArgb(190, 225, 225, 228)))

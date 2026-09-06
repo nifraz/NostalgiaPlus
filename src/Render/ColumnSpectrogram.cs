@@ -108,11 +108,20 @@ namespace NostalgiaPlus.Render
         /// </summary>
         public void Draw(Graphics g, Rectangle dest, bool newestOnRight)
         {
+            Draw(g, dest, newestOnRight, InterpolationMode.NearestNeighbor);
+        }
+
+        /// <summary>
+        /// Nearest-neighbour keeps the 1:1 case exact; the bloom path passes Bilinear
+        /// because it draws the ring straight into a small bitmap.
+        /// </summary>
+        public void Draw(Graphics g, Rectangle dest, bool newestOnRight, InterpolationMode mode)
+        {
             if (_bmp == null || dest.Width <= 0 || dest.Height <= 0) return;
 
             InterpolationMode oldInterp = g.InterpolationMode;
             PixelOffsetMode oldOffset = g.PixelOffsetMode;
-            g.InterpolationMode = InterpolationMode.NearestNeighbor;
+            g.InterpolationMode = mode;
             g.PixelOffsetMode = PixelOffsetMode.Half;
 
             GraphicsState state = null;

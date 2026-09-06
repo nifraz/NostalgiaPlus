@@ -59,6 +59,42 @@ class FsHarness
         }
     }
 
+    // The views smooth their own paint/analysis timings into private fields; read
+    // them back so the harness can report cost instead of us guessing at it.
+    // Lets the harness isolate the cost of individual draw stages.
+    static string[] Flags = new string[0];
+    static bool Flag(string name)
+    {
+        foreach (var f in Flags) if (f == name) return true;
+        return false;
+    }
+
+    static void ApplyFlags(Settings s)
+    {
+        if (Flag("noglow")) s.FsGlow = false;
+        if (Flag("nowave")) s.FsShowWaveform = false;
+        if (Flag("nogrid")) s.FsShowGrid = false;
+        if (Flag("nooverlay")) s.FsShowOverlays = false;
+        if (Flag("nohover")) s.ShowHud = false;
+        if (Flag("notrace")) { s.ShowMax = false; s.ShowMin = false; s.ShowAvg = false; }
+    }
+
+    static void ReportTiming(object view, string label)
+    {
+        var f = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
+        var t = view.GetType();
+        string[] names = { "_fps", "_analysisMs", "_paintMs" };
+        string line = label + ":";
+        foreach (var n in names)
+        {
+            var fi = t.GetField(n, f);
+            if (fi == null) continue;
+            double v = Convert.ToDouble(fi.GetValue(view));
+            line += "  " + n.TrimStart('_') + "=" + v.ToString("0.00");
+        }
+        Console.WriteLine(line);
+    }
+
     static void SetHover(object view, int x, int y)
     {
         var f = System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance;
@@ -75,6 +111,11 @@ class FsHarness
     static void Main(string[] args)
     {
         string outDir = args.Length > 0 ? args[0] : ".";
+        if (args.Length > 1)
+        {
+            Flags = new string[args.Length - 1];
+            Array.Copy(args, 1, Flags, 0, args.Length - 1);
+        }
         int W = 1920, H = 1080;
 
         var settings = new Settings();
@@ -82,6 +123,7 @@ class FsHarness
         settings.MirrorLeftPane = true;   // verify the new centre-out arrangement
         settings.FsAutoHide = false;      // keep axes and readout visible for the capture
         settings.CurveWidthPct = 12;
+        ApplyFlags(settings);
 
         // Not started, so no WASAPI thread claims the endpoint - we own the ring.
         var cap = new LoopbackCapture();
@@ -95,7 +137,7 @@ class FsHarness
 
         var sw = System.Diagnostics.Stopwatch.StartNew();
         double nextFeed = 0;
-        while (sw.Elapsed.TotalSeconds < 30.0)
+        while (sw.Elapsed.TotalSeconds < (Flags.Length > 0 ? 12.0 : 30.0))
         {
             double now = sw.Elapsed.TotalSeconds;
             while (nextFeed <= now)
@@ -121,6 +163,7 @@ class FsHarness
             view.DrawToBitmap(bmp, new Rectangle(0, 0, W, H));
             bmp.Save(System.IO.Path.Combine(outDir, "fullscreen.png"), ImageFormat.Png);
         }
+        ReportTiming(view, "fullscreen");
         Console.WriteLine("wrote fullscreen.png");
 
         view.Close();
@@ -180,6 +223,7 @@ class FsHarness
             panel.DrawToBitmap(bmp, new Rectangle(0, 0, W, H));
             bmp.Save(System.IO.Path.Combine(outDir, "panel-stereo.png"), ImageFormat.Png);
         }
+        ReportTiming(panel, "docked    ");
         Console.WriteLine("wrote panel-stereo.png");
         panel.StopCapture();
         form.Close();
