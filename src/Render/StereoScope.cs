@@ -293,7 +293,21 @@ namespace NostalgiaPlus.Render
             int lineFrom = s.SyncHover ? Bounds.Left : hit.Bounds.Left;
             int lineTo = s.SyncHover ? Bounds.Right : hit.Bounds.Right;
             using (var pen = new Pen(Color.FromArgb(120, 255, 255, 255)))
+            {
                 g.DrawLine(pen, lineFrom, mouse.Y, lineTo, mouse.Y);
+                // Mark the sampled instant, and mirror it into the other pane, which
+                // under Mirror is the opposite x for the same moment.
+                int a = hit.AgeAt(mouse.X);
+                if (a > 0)
+                    for (int i = 0; i < _panes.Length; i++)
+                    {
+                        if (!s.SyncHover && !ReferenceEquals(_panes[i], hit)) continue;
+                        Rectangle sr = _panes[i].SpectroRect;
+                        int mx = _panes[i].CurveOnLeft ? sr.Left + a : sr.Right - 1 - a;
+                        if (mx >= sr.Left && mx < sr.Right)
+                            g.DrawLine(pen, mx, sr.Top, mx, sr.Bottom);
+                    }
+            }
 
             // Mark where the line crosses each pane's curve, so the level is locatable.
             using (var dot = new SolidBrush(Color.FromArgb(220, 255, 255, 255)))
@@ -301,7 +315,10 @@ namespace NostalgiaPlus.Render
                 {
                     if (!s.SyncHover && !ReferenceEquals(_panes[i], hit)) continue;
                     if (_panes[i].CurveRect.Width < 3) continue;
-                    double t = (_panes[i].Display[bin] - FloorDb) / Math.Max(1, CeilingDb - FloorDb);
+                    double lv;
+                    if (hit.AgeAt(mouse.X) <= 0 || !_panes[i].TryHistory(hit.AgeAt(mouse.X), bin, out lv))
+                        lv = _panes[i].Display[bin];
+                    double t = (lv - FloorDb) / Math.Max(1, CeilingDb - FloorDb);
                     if (t < 0) t = 0; else if (t > 1) t = 1;
                     int baseX = _panes[i].CurveOnLeft ? _panes[i].CurveRect.Left : _panes[i].CurveRect.Right;
                     int dir = _panes[i].CurveOnLeft ? 1 : -1;
@@ -309,10 +326,30 @@ namespace NostalgiaPlus.Render
                     g.FillRectangle(dot, x - 2, mouse.Y - 2, 4, 4);
                 }
 
+            // Read the column actually under the cursor rather than the live spectrum,
+            // so pointing at something ten seconds back reports what happened then.
+            int age = hit.AgeAt(mouse.X);
+            bool historic = age > 0;
+            var levels = new double[_panes.Length];
+            for (int i = 0; i < _panes.Length; i++)
+            {
+                double v;
+                if (!historic || !_panes[i].TryHistory(age, bin, out v)) v = _panes[i].Display[bin];
+                levels[i] = v;
+            }
+
             string text = FormatHz(freq) + "   " + note + cents.ToString("+0;-0;+0") + "c";
             for (int i = 0; i < _panes.Length; i++)
-                text += "   " + _panes[i].Label + " " + _panes[i].Display[bin].ToString("0.0");
+                text += "   " + _panes[i].Label + " " + levels[i].ToString("0.0");
             text += " dB";
+            if (_panes.Length == 2)
+                text += "   d " + (levels[0] - levels[1]).ToString("+0.0;-0.0; 0.0");
+            if (historic)
+            {
+                double rowsPerSecond = (double)s.TargetFps / Math.Max(1, s.ScrollDivider);
+                if (rowsPerSecond > 0)
+                    text += "   -" + (age / rowsPerSecond).ToString("0.00") + "s";
+            }
 
             SizeF ts = g.MeasureString(text, font);
             float bx = mouse.X + 14;

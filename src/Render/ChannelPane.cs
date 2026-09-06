@@ -56,6 +56,13 @@ namespace NostalgiaPlus.Render
         private double[] _intensity = new double[0];
         private readonly ExtremumTracker _ext = new ExtremumTracker();
 
+        // dB history parallel to the spectrogram columns. The bitmap only stores
+        // palette colours, and the floor/ceiling move, so levels cannot be recovered
+        // from it - without this, hovering over a column from ten seconds ago reads
+        // today's spectrum.
+        private float[] _hist = new float[0];
+        private int _histHead, _histCols, _histBins;
+
         public Rectangle Bounds { get; private set; }
         public Rectangle CurveRect { get; private set; }
         public Rectangle SpectroRect { get; private set; }
@@ -97,6 +104,13 @@ namespace NostalgiaPlus.Render
 
             DisposeOffscreen();
             EnsureArrays(SpectroRect.Height);
+
+            _histCols = SpectroRect.Width;
+            _histBins = SpectroRect.Height;
+            int cells = _histCols * _histBins;
+            if (_hist.Length != cells) _hist = new float[cells];
+            for (int i = 0; i < cells; i++) _hist[i] = (float)SpectrumAnalyzer.FloorDb;
+            _histHead = 0;
         }
 
         private void EnsureArrays(int n)
@@ -159,6 +173,34 @@ namespace NostalgiaPlus.Render
                 _intensity[i] = t < 0 ? 0 : (t > 1 ? 1 : t);
             }
             _sg.PushColumn(_intensity, n, lut);
+
+            if (_histCols > 0 && _hist.Length == _histCols * _histBins)
+            {
+                _histHead = (_histHead - 1 + _histCols) % _histCols;
+                int b = _histHead * _histBins;
+                int m = Math.Min(n, _histBins);
+                for (int i = 0; i < m; i++) _hist[b + i] = (float)_raw[i];
+            }
+        }
+
+        /// <summary>
+        /// Level at a past column. <paramref name="age"/> is columns back from the
+        /// newest slice; bin 0 is the lowest frequency.
+        /// </summary>
+        public bool TryHistory(int age, int bin, out double db)
+        {
+            db = SpectrumAnalyzer.FloorDb;
+            if (_histCols <= 0 || age < 0 || age >= _histCols) return false;
+            if (bin < 0 || bin >= _histBins) return false;
+            if (_hist.Length != _histCols * _histBins) return false;
+            db = _hist[((_histHead + age) % _histCols) * _histBins + bin];
+            return true;
+        }
+
+        /// <summary>Columns back from "now" for a pixel, following this pane's direction.</summary>
+        public int AgeAt(int x)
+        {
+            return CurveOnLeft ? x - SpectroRect.Left : SpectroRect.Right - 1 - x;
         }
 
         // ---------------- painting ----------------
