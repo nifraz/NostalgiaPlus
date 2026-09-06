@@ -90,6 +90,71 @@ namespace NostalgiaPlus.Render
         }
 
         /// <summary>Builds a 256-entry packed-ARGB table (opaque).</summary>
+        /// <summary>
+        /// Rotates every entry's hue by <paramref name="degrees"/>, keeping saturation
+        /// and lightness. The ramp stays perceptually uniform - a hue rotation moves
+        /// where the colours sit on the wheel without changing how far apart they are -
+        /// so the picture remains readable while its colour follows the music.
+        /// </summary>
+        public static int[] BuildLut(PaletteKind kind, double degrees)
+        {
+            int[] lut = BuildLut(kind);
+            if (Math.Abs(degrees) < 0.5) return lut;
+
+            var shifted = new int[lut.Length];
+            for (int i = 0; i < lut.Length; i++)
+            {
+                int c = lut[i];
+                int r = (c >> 16) & 0xFF, g = (c >> 8) & 0xFF, b = c & 0xFF;
+                double h, sv, l;
+                ToHsl(r, g, b, out h, out sv, out l);
+                h += degrees;
+                while (h < 0) h += 360;
+                while (h >= 360) h -= 360;
+                int nr, ng, nb;
+                FromHsl(h, sv, l, out nr, out ng, out nb);
+                shifted[i] = unchecked((int)0xFF000000) | (nr << 16) | (ng << 8) | nb;
+            }
+            return shifted;
+        }
+
+        private static void ToHsl(int r8, int g8, int b8, out double h, out double s, out double l)
+        {
+            double r = r8 / 255.0, g = g8 / 255.0, b = b8 / 255.0;
+            double max = Math.Max(r, Math.Max(g, b)), min = Math.Min(r, Math.Min(g, b));
+            l = (max + min) / 2.0;
+            double d = max - min;
+            if (d < 1e-9) { h = 0; s = 0; return; }
+            s = l > 0.5 ? d / (2.0 - max - min) : d / (max + min);
+            if (max == r) h = 60.0 * (((g - b) / d) % 6.0);
+            else if (max == g) h = 60.0 * ((b - r) / d + 2.0);
+            else h = 60.0 * ((r - g) / d + 4.0);
+            if (h < 0) h += 360;
+        }
+
+        private static void FromHsl(double h, double s, double l, out int r, out int g, out int b)
+        {
+            double c = (1.0 - Math.Abs(2.0 * l - 1.0)) * s;
+            double x = c * (1.0 - Math.Abs(((h / 60.0) % 2.0) - 1.0));
+            double m = l - c / 2.0;
+            double rr, gg, bb;
+            if (h < 60) { rr = c; gg = x; bb = 0; }
+            else if (h < 120) { rr = x; gg = c; bb = 0; }
+            else if (h < 180) { rr = 0; gg = c; bb = x; }
+            else if (h < 240) { rr = 0; gg = x; bb = c; }
+            else if (h < 300) { rr = x; gg = 0; bb = c; }
+            else { rr = c; gg = 0; bb = x; }
+            r = Clamp8((rr + m) * 255.0);
+            g = Clamp8((gg + m) * 255.0);
+            b = Clamp8((bb + m) * 255.0);
+        }
+
+        private static int Clamp8(double v)
+        {
+            int i = (int)Math.Round(v);
+            return i < 0 ? 0 : (i > 255 ? 255 : i);
+        }
+
         public static int[] BuildLut(PaletteKind kind)
         {
             Stop[] stops = StopsFor(kind);

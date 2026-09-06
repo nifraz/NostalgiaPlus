@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
 using System.Drawing.Text;
 using System.Runtime.InteropServices;
 using System.Threading;
@@ -56,6 +57,14 @@ namespace NostalgiaPlus.Ui
         private readonly float[] _gonR = new float[1024];
         private int _gonCount;
 
+        // Album art, reduced once per track to a small bitmap that upscales into a
+        // blur. Decoding base64 and blurring at screen size per frame would cost more
+        // than everything else drawn put together.
+        private Bitmap _backdrop;
+        private string _backdropKey;
+        private int _backdropPct = -1;
+        private double _hueShift;
+
         private Font _fontBig, _fontMid, _fontSmall, _fontTiny;
         private double _fps, _analysisMs, _paintMs;
         private string _title = "", _artist = "", _album = "";
@@ -84,7 +93,7 @@ namespace NostalgiaPlus.Ui
                      ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
 
             RebuildFonts();
-            _lut = Palette.BuildLut(_settings.Palette);
+            _lut = Palette.BuildLut(_settings.Palette, _hueShift);
             _scope.SetPalette(_lut);
             _hintUntil = DateTime.UtcNow.AddSeconds(4);
 
@@ -156,7 +165,7 @@ namespace NostalgiaPlus.Ui
         private void OnSettingsChanged(bool rebuildGeometry)
         {
             RebuildFonts();
-            _lut = Palette.BuildLut(_settings.Palette);
+            _lut = Palette.BuildLut(_settings.Palette, _hueShift);
             _scope.SetPalette(_lut);
             lock (_gate) { _scope.ResetRange(); }
             RebuildGeometry();
@@ -182,6 +191,8 @@ namespace NostalgiaPlus.Ui
                 _running = false;
                 ShowCursorIfHidden();
                 _scope.Dispose();
+                _deck.Dispose();
+                if (_backdrop != null) { _backdrop.Dispose(); _backdrop = null; }
                 if (_fontBig != null) _fontBig.Dispose();
                 if (_fontMid != null) _fontMid.Dispose();
                 if (_fontSmall != null) _fontSmall.Dispose();
@@ -418,13 +429,150 @@ namespace NostalgiaPlus.Ui
             _paintMs = _paintMs * 0.9 + t.Elapsed.TotalMilliseconds * 0.1;
         }
 
+        /// <summary>
+        /// Rebuilds the palette when the music's brightness has moved far enough to see.
+        ///
+        /// Only new spectrogram columns take the new colours - the ones already drawn
+        /// keep the hue they were pushed with - so the image ends up carrying its own
+        /// recent history in colour as well as in shape.
+        /// </summary>
+        private void UpdateHue()
+        {
+            double want = 0;
+            if (_settings.ImmColourFollows && _settings.FsImmersive)
+            {
+                double centre;
+                lock (_gate) { centre = _scope.Features.Centroid; }
+                want = (centre - 0.5) * 2.0 * _settings.ColourFollowDegrees;
+            }
+            // A degree either way is invisible; rebuilding the table for it is not free.
+            if (Math.Abs(want - _hueShift) < 1.0) return;
+            _hueShift = want;
+            _lut = Palette.BuildLut(_settings.Palette, _hueShift);
+            lock (_gate) { _scope.SetPalette(_lut); }
+        }
+
+        /// <summary>
+        /// The album art behind everything, blurred and dimmed.
+        ///
+        /// Drawn as the ground rather than over the top, so it shows through wherever
+        /// there is no data - the graph strips, the margins, the quiet parts of the
+        /// spectrogram - and is covered wherever there is. That is what makes it read
+        /// as ambient light behind the analysis instead of a wash over it.
+        /// </summary>
+        private void DrawBackdrop(Graphics g)
+        {
+            int pct = Math.Max(0, Math.Min(60, _settings.BackdropPct));
+            if (pct == 0) return;
+
+            string data = _player.SafeArtwork();
+            if (string.IsNullOrEmpty(data))
+            {
+                if (_backdrop != null) { _backdrop.Dispose(); _backdrop = null; }
+                _backdropKey = null;
+                return;
+            }
+            if (data != _backdropKey || pct != _backdropPct)
+            {
+                _backdropKey = data;
+                _backdropPct = pct;
+                if (_backdrop != null) { _backdrop.Dispose(); _backdrop = null; }
+                try
+                {
+                    byte[] bytes = Convert.FromBase64String(data);
+                    using (var ms = new System.IO.MemoryStream(bytes))
+                    using (var full = new Bitmap(ms))
+                    {
+                        // Reduced to 40px and upscaled bilinearly at paint time: a real
+                        // blur kernel at 1920x1080 is not worth its cost for something
+                        // deliberately out of focus.
+                        //
+                        // The dimming is baked in here rather than applied during the
+                        // upscale. A ColorMatrix costs one matrix multiply per
+                        // *destination* pixel - two million of them per frame - and
+                        // measured at twenty milliseconds. Applied to the 40x40 source
+                        // once per track it is free, and the upscale becomes a plain
+                        // premultiplied blend.
+                        _backdrop = new Bitmap(40, 40, PixelFormat.Format32bppPArgb);
+                        using (var bg = Graphics.FromImage(_backdrop))
+                        using (var attr = new ImageAttributes())
+                        {
+                            var cm = new ColorMatrix();
+                            cm.Matrix33 = pct / 100f;
+                            attr.SetColorMatrix(cm);
+                            bg.CompositingMode = CompositingMode.SourceCopy;
+                            bg.InterpolationMode = InterpolationMode.HighQualityBicubic;
+                            bg.DrawImage(full, new Rectangle(0, 0, 40, 40),
+                                         0, 0, full.Width, full.Height, GraphicsUnit.Pixel, attr);
+                        }
+                    }
+                }
+                catch { _backdrop = null; }
+            }
+            if (_backdrop == null) return;
+
+            // Only where it can actually be seen. The spectrograms are opaque blits, so
+            // every backdrop pixel under one is blended and then thrown away - and they
+            // are most of the screen.
+            var old = g.InterpolationMode;
+            Region clip = g.Clip;
+            try
+            {
+                ChannelPane[] panes;
+                lock (_gate) { panes = _scope.Panes; }
+                for (int i = 0; i < panes.Length; i++)
+                    if (panes[i].SpectroRect.Width > 0) g.ExcludeClip(panes[i].SpectroRect);
+
+                g.InterpolationMode = InterpolationMode.Bilinear;
+                g.DrawImage(_backdrop, new Rectangle(0, 0, ClientSize.Width, ClientSize.Height),
+                            0, 0, _backdrop.Width, _backdrop.Height, GraphicsUnit.Pixel);
+            }
+            finally
+            {
+                g.Clip = clip;
+                g.InterpolationMode = old;
+            }
+        }
+
+        /// <summary>
+        /// A flare along the screen edges on each onset.
+        ///
+        /// Four gradient bars rather than a full-screen vignette: the edges are where
+        /// the eye catches movement without being pulled off the analysis, and it is
+        /// about a sixth of the pixels a vignette would blend.
+        /// </summary>
+        private void DrawBeatFlare(Graphics g, double pulse)
+        {
+            if (pulse <= 0.02) return;
+            int w = ClientSize.Width, h = ClientSize.Height;
+            // The band recedes as well as fades, so a decaying beat costs progressively
+            // less to draw - and reads more like a flare than a light being dimmed.
+            int band = (int)(Math.Max(20, Math.Min(48, h / 22)) * (0.35 + 0.65 * pulse));
+            if (band < 6) return;
+            Color c = Palette.ColorAt(_lut, 0.9);
+            int a = (int)(pulse * 90);
+            if (a < 2) return;
+            Color hot = Color.FromArgb(a, c), gone = Color.FromArgb(0, c);
+
+            using (var top = new LinearGradientBrush(new Rectangle(0, 0, w, band), hot, gone, LinearGradientMode.Vertical))
+                g.FillRectangle(top, 0, 0, w, band);
+            using (var bot = new LinearGradientBrush(new Rectangle(0, h - band, w, band), gone, hot, LinearGradientMode.Vertical))
+                g.FillRectangle(bot, 0, h - band, w, band);
+            using (var left = new LinearGradientBrush(new Rectangle(0, 0, band, h), hot, gone, LinearGradientMode.Horizontal))
+                g.FillRectangle(left, 0, 0, band, h);
+            using (var right = new LinearGradientBrush(new Rectangle(w - band, 0, band, h), gone, hot, LinearGradientMode.Horizontal))
+                g.FillRectangle(right, w - band, 0, band, h);
+        }
+
         private void PaintFrame(Graphics g)
         {
             // GDI+ antialiased text is by far the most expensive thing drawn per frame
             // once the spectrogram is a blit. Grid-fit rendering is several times faster
             // and, at these sizes on a dark ground, indistinguishable.
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
+            UpdateHue();
             g.Clear(Palette.Background(_lut));
+            if (_settings.ImmBackdrop && _settings.FsImmersive) DrawBackdrop(g);
             // The OSD switch gates every drawn annotation; gridlines stay because they
             // are part of reading the image rather than chrome on top of it.
             double furniture = _settings.FsShowOsd ? FurnitureAlpha() : 0.0;
@@ -466,6 +614,13 @@ namespace NostalgiaPlus.Ui
             if (_settings.FsShowOverlays && _settings.FsShowOsd) DrawOverlays(g, furniture, chromeTop);
             if (furniture > 0.004 && _settings.FsShowOsd)
                 _quick.Draw(g, _fontTiny, furniture, _settings.QuickBarCompact);
+            // Last, over everything: a beat is felt at the edge of vision, not read.
+            if (_settings.ImmBeatReactive && _settings.FsImmersive)
+            {
+                double pulse;
+                lock (_gate) { pulse = _scope.Features.Pulse; }
+                DrawBeatFlare(g, pulse);
+            }
             if (_settings.FsShowOsd) DrawHint(g);
         }
 

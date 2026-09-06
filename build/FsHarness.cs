@@ -22,10 +22,37 @@ class FsHarness
     // Stands in for MusicBee so the deck's transport, clock and seek bar can be seen
     // offscreen. No artwork: the harness has none to give, which also exercises the
     // deck's empty-artwork path.
+    // A generated stand-in cover, so the backdrop and the deck thumbnail have
+    // something to show - and so the backdrop path is measured rather than skipped.
+    static string _art;
+    static string Artwork()
+    {
+        if (_art != null) return _art;
+        using (var bmp = new Bitmap(300, 300))
+        {
+            using (var g = Graphics.FromImage(bmp))
+            using (var grad = new System.Drawing.Drawing2D.LinearGradientBrush(
+                       new Rectangle(0, 0, 300, 300),
+                       Color.FromArgb(20, 60, 140), Color.FromArgb(220, 90, 40), 45f))
+            {
+                g.FillRectangle(grad, 0, 0, 300, 300);
+                using (var pen = new Pen(Color.FromArgb(200, 250, 220, 120), 14))
+                    g.DrawEllipse(pen, 70, 70, 160, 160);
+            }
+            using (var ms = new System.IO.MemoryStream())
+            {
+                bmp.Save(ms, ImageFormat.Png);
+                _art = Convert.ToBase64String(ms.ToArray());
+            }
+        }
+        return _art;
+    }
+
     static PlayerBridge Bridge()
     {
         var b = new PlayerBridge();
         b.Info = Info;
+        b.Artwork = Artwork;
         b.Duration = delegate { return 254000; };
         b.Position = delegate { return 71000; };
         b.IsPlaying = delegate { return true; };

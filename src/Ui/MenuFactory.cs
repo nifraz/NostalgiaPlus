@@ -905,6 +905,73 @@ namespace NostalgiaPlus.Ui
                     imm.Click += delegate { o.ToggleImmersive(); };
                     m.DropDownItems.Add(imm);
                 }
+                var imm2 = Sub("Immersion", "How the picture responds to the music itself, rather than\n"
+                                            + "just displaying it. All of it needs Immersive mode on.");
+                AddToggle(imm2.DropDownItems, "Album art backdrop",
+                          "The artwork blurred and dimmed behind everything. Drawn as the\n"
+                          + "ground rather than over the top, so it shows through where\n"
+                          + "there is no data and is covered where there is - ambient light\n"
+                          + "behind the analysis rather than a wash over it.",
+                          s.ImmBackdrop,
+                          delegate { s.ImmBackdrop = !s.ImmBackdrop; o.Changed(false); });
+
+                var bd = Sub("Backdrop strength", "How far the artwork comes forward.");
+                int[] bdp = { 0, 8, 18, 30, 45, 60 };
+                foreach (int bv in bdp)
+                {
+                    int captured = bv;
+                    Choice(bd, bv == 0 ? "Off" : bv + "%",
+                           bv == 0 ? "No backdrop."
+                           : bv <= 18 ? "A suggestion of colour in the empty parts."
+                           : bv <= 30 ? "Clearly the album, still behind the analysis."
+                           : "Strong. The artwork starts competing with the spectrogram.",
+                           s.BackdropPct == captured,
+                           delegate { s.BackdropPct = captured; o.Changed(false); });
+                }
+                bd.Enabled = s.ImmBackdrop;
+                imm2.DropDownItems.Add(bd);
+
+                AddToggle(imm2.DropDownItems, "Beat reactive",
+                          "The screen edges flare on each onset, detected from rising\n"
+                          + "spectral energy. Four gradient bars rather than a full vignette:\n"
+                          + "the edge of vision is where a beat is felt without pulling you\n"
+                          + "off the analysis.",
+                          s.ImmBeatReactive,
+                          delegate { s.ImmBeatReactive = !s.ImmBeatReactive; o.Changed(false); });
+
+                AddToggle(imm2.DropDownItems, "Colour follows the music",
+                          "Hue shifts with the spectral centroid, so a bright passage and a\n"
+                          + "dark one are different colours. Only new spectrogram columns\n"
+                          + "take the new hue, so the image carries its own recent history\n"
+                          + "in colour as well as in shape.",
+                          s.ImmColourFollows,
+                          delegate { s.ImmColourFollows = !s.ImmColourFollows; o.Changed(false); });
+
+                var cf = Sub("Colour swing", "How far the hue travels between the darkest and\n"
+                                             + "brightest passages.");
+                int[] cfd = { 15, 25, 40, 70, 120 };
+                foreach (int cv in cfd)
+                {
+                    int captured = cv;
+                    Choice(cf, cv + " degrees",
+                           cv <= 25 ? "A tint. You notice it without being able to name it."
+                           : cv <= 70 ? "Clearly a different colour between sections."
+                           : "Right across the wheel. Dramatic, and further from the\npalette you chose.",
+                           s.ColourFollowDegrees == captured,
+                           delegate { s.ColourFollowDegrees = captured; o.Changed(false); });
+                }
+                cf.Enabled = s.ImmColourFollows;
+                imm2.DropDownItems.Add(cf);
+
+                AddToggle(imm2.DropDownItems, "Cinematic motion",
+                          "Quarter scroll speed and three times the fall time, so the image\n"
+                          + "drifts and hits leave trails. Reading exact timings gets harder;\n"
+                          + "watching a whole section as one shape gets much easier.",
+                          s.ImmCinematic,
+                          delegate { s.ImmCinematic = !s.ImmCinematic; o.Changed(false); });
+                imm2.Enabled = s.FsImmersive;
+                m.DropDownItems.Add(imm2);
+
                 AddToggle(m.DropDownItems, "Glow",
                           "Bloom around bright spectrogram content. The most expensive thing\n"
                           + "drawn each frame - turn it off first if frames are dropping.",

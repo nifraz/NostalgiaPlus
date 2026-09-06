@@ -155,6 +155,20 @@ namespace NostalgiaPlus
         public bool FsGlow = true;
         public bool FsAutoHide = true;
 
+        // --- immersion: how the picture responds to the music itself ---
+        /// <summary>The album art, blurred and dimmed, behind everything.</summary>
+        public bool ImmBackdrop = true;
+        /// <summary>How strongly the backdrop shows, as a percentage.</summary>
+        public int BackdropPct = 18;
+        /// <summary>Bloom swells and the edges flare on each detected onset.</summary>
+        public bool ImmBeatReactive = true;
+        /// <summary>Hue follows the spectral centroid, so bright passages shift colour.</summary>
+        public bool ImmColourFollows = true;
+        /// <summary>Full swing of that shift, in degrees around the colour wheel.</summary>
+        public int ColourFollowDegrees = 40;
+        /// <summary>Much slower scroll and longer trails, for watching rather than reading.</summary>
+        public bool ImmCinematic = false;
+
         /// <summary>
         /// Height of the reserved scale strip, in pixels. Derived from the text size
         /// rather than stored, so changing the font never leaves the strip too small
@@ -469,6 +483,12 @@ namespace NostalgiaPlus
                 s.FsImmersive = ParseBool(map, "FsImmersive", s.FsImmersive);
                 s.FsGlow = ParseBool(map, "FsGlow", s.FsGlow);
                 s.FsAutoHide = ParseBool(map, "FsAutoHide", s.FsAutoHide);
+                s.ImmBackdrop = ParseBool(map, "ImmBackdrop", s.ImmBackdrop);
+                s.BackdropPct = (int)ParseDouble(map, "BackdropPct", s.BackdropPct);
+                s.ImmBeatReactive = ParseBool(map, "ImmBeatReactive", s.ImmBeatReactive);
+                s.ImmColourFollows = ParseBool(map, "ImmColourFollows", s.ImmColourFollows);
+                s.ColourFollowDegrees = (int)ParseDouble(map, "ColourFollowDegrees", s.ColourFollowDegrees);
+                s.ImmCinematic = ParseBool(map, "ImmCinematic", s.ImmCinematic);
             }
             catch { /* a corrupt file should never stop the panel from opening */ }
             return s;
@@ -554,6 +574,12 @@ namespace NostalgiaPlus
                 sb.AppendLine("FsImmersive=" + FsImmersive);
                 sb.AppendLine("FsGlow=" + FsGlow);
                 sb.AppendLine("FsAutoHide=" + FsAutoHide);
+                sb.AppendLine("ImmBackdrop=" + ImmBackdrop);
+                sb.AppendLine("BackdropPct=" + BackdropPct);
+                sb.AppendLine("ImmBeatReactive=" + ImmBeatReactive);
+                sb.AppendLine("ImmColourFollows=" + ImmColourFollows);
+                sb.AppendLine("ColourFollowDegrees=" + ColourFollowDegrees);
+                sb.AppendLine("ImmCinematic=" + ImmCinematic);
                 File.WriteAllText(file, sb.ToString());
             }
             catch { }

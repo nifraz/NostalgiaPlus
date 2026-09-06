@@ -28,6 +28,7 @@ namespace NostalgiaPlus.Render
     {
         private readonly SpectrumAnalyzer _analyzer = new SpectrumAnalyzer();
         private readonly DynamicRange _range = new DynamicRange();
+        private readonly MusicFeatures _features = new MusicFeatures();
         private ChannelPane[] _panes = new ChannelPane[0];
         private FrequencyMap _map;
         private int[] _lut;
@@ -64,11 +65,13 @@ namespace NostalgiaPlus.Render
         public FrequencyMap Map { get { return _map; } }
         public ChannelPane[] Panes { get { return _panes; } }
         public SpectrumAnalyzer Analyzer { get { return _analyzer; } }
+        /// <summary>What the music is doing, for the views to react to.</summary>
+        public MusicFeatures Features { get { return _features; } }
 
         public StereoScope() { FloorDb = -95; CeilingDb = -5; }
 
         public void SetPalette(int[] lut) { _lut = lut; }
-        public void ResetRange() { _range.Reset(); }
+        public void ResetRange() { _range.Reset(); _features.Reset(); }
 
         /// <summary>
         /// Rebuilds pane geometry. Single-channel modes collapse to one full-width pane.
@@ -152,11 +155,19 @@ namespace NostalgiaPlus.Render
                                          s.Aggregate, s.TiltDbPerOctave, s.PairMode))
                 return false;
 
-            a.Update(dt, s.Interp, s.Filter, s.AttackMs, s.ReleaseMs,
+            // Cinematic lengthens the fall rather than the rise: hits still arrive
+            // sharply, they just take longer to let go, which is what reads as a trail.
+            double release = s.ImmCinematic ? s.ReleaseMs * 3.0 : s.ReleaseMs;
+
+            a.Update(dt, s.Interp, s.Filter, s.AttackMs, release,
                      s.PeakDecayDbPerSec, s.AverageSeconds);
             if (!ReferenceEquals(a, b))
-                b.Update(dt, s.Interp, s.Filter, s.AttackMs, s.ReleaseMs,
+                b.Update(dt, s.Interp, s.Filter, s.AttackMs, release,
                          s.PeakDecayDbPerSec, s.AverageSeconds);
+
+            // Driven from one channel's raw spectrum: the two channels of music share
+            // their onsets, and running the detector twice would only cost twice.
+            _features.Update(a.Raw, n, dt);
 
             if (s.AdaptiveRange)
             {
@@ -175,7 +186,7 @@ namespace NostalgiaPlus.Render
             if (CeilingDb - FloorDb < 1) CeilingDb = FloorDb + 1;
 
             bool push = !frozen;
-            int div = s.ScrollDivider;
+            int div = s.ImmCinematic ? s.ScrollDivider * 4 : s.ScrollDivider;
             if (div > 1)
             {
                 _scrollTick++;
