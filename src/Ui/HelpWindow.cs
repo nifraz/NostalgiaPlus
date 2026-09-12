@@ -143,6 +143,19 @@ namespace NostalgiaPlus.Ui
         {
             const string S = "Reading the display";
 
+            Add(S, "Docked and fullscreen",
+                "They are the same instrument at two sizes, not a preview and a real version. The "
+                + "waveform lanes, the centre deck with its metadata and readouts, the immersive "
+                + "treatment, the keys and the whole right-click menu are identical in both.\n\n"
+                + "Settings are shared, which is the point: whatever you set up docked is what you "
+                + "get on F11, and back again. The three exceptions are things one view does not "
+                + "have - the docked panel's colour bar and status line, and its panel height, which "
+                + "resizes the host panel MusicBee gives it.\n\n"
+                + "The docked panel is a few hundred pixels tall, so the deck asks for a third of it "
+                + "at most and drops whatever will not fit. If it crowds the spectrogram, lower the "
+                + "deck height or switch the deck off with O - and remember that does it in both "
+                + "views.", 1);
+
             Add(S, "The two panes",
                 "The view is split into one pane per channel, left and right, each showing the same "
                 + "thing for its own channel: a spectrogram and, beside it, the instantaneous spectrum "
@@ -272,11 +285,11 @@ namespace NostalgiaPlus.Ui
                 + "while the music moves under it. That is how to answer \"is this master brighter "
                 + "than that one\" without trusting your memory of a curve from thirty seconds ago: "
                 + "take it on one track, start the other, and compare. A again drops it.\n\n"
-                + "Keys, in the fullscreen view: F11 or Esc leaves, Space freezes, A holds or drops "
-                + "the comparison curve, I toggles immersive mode, H hides the on-screen display, O "
-                + "the centre deck, W the waveform lanes, G the gridlines, M mirror, B the graph "
-                + "style, C the channel mode, P the palette. F1 opens this window. In the docked "
-                + "panel, F11 goes fullscreen, Space freezes and A compares.", 1);
+                + "The same keys work in both views, so there is only one set to learn: Space "
+                + "freezes, A holds or drops the comparison curve, I toggles immersive mode, H hides "
+                + "the on-screen display, O the centre deck, W the waveform lanes, G the gridlines, M "
+                + "mirror, B the graph style, C the channel mode, P the palette, and F1 opens this "
+                + "window. F11 swaps between docked and fullscreen; in fullscreen, Esc also leaves.", 1);
 
             Add(S, "Where your settings are kept",
                 "Settings are stored as plain key=value text under MusicBee's persistent storage path, "

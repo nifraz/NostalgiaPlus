@@ -187,6 +187,9 @@ tonal balance directly rather than from memory. `A` again drops it.
 Right-click anywhere for the full menu - the same one the docked panel uses, plus the
 fullscreen toggles and a curve-width setting.
 
+The same keys work in both views, and every setting is shared - whatever you set up
+docked is what you get on `F11`, and back again.
+
 | Key | Action |
 |---|---|
 | `Esc` / `F11` | Exit |
@@ -274,6 +277,8 @@ src/
     ColumnSpectrogram.cs   vertical-frequency variant plus the waveform ring
   Ui/
     AnalyzerPanel.cs       docked stereo panel: curve pane plus two spectrogram lanes
+    BottomBand.cs          waveform lanes, centre deck and metering, shared by both views
+    Immersion.cs           backdrop, hue drift, beat flare, idle fade - shared
     FullscreenView.cs      mirrored stereo view, waveform lanes, backdrop
     CenterDeck.cs          metadata, centred goniometer, transport, readouts
     MenuFactory.cs         the right-click menu shared by both views

@@ -1150,13 +1150,15 @@ namespace NostalgiaPlus.Ui
 
             m.DropDownItems.Add(new ToolStripSeparator());
 
-            if (o.IsFullscreen)
+            // No longer fullscreen-only. Every one of these works in the docked panel
+            // too, and gating them there left it looking like a cut-down build rather
+            // than the same instrument at a different size.
             {
                 AddToggle(m.DropDownItems, "On-screen display  (H)",
                           "Master switch for everything drawn on top of the analysis: labels,\n"
                           + "meters, track info and the button bar. Gridlines stay, because\n"
                           + "they are part of reading the image rather than chrome on it.",
-                          s.FsShowOsd, delegate { s.FsShowOsd = !s.FsShowOsd; o.Changed(false); });
+                          s.ShowOsd, delegate { s.ShowOsd = !s.ShowOsd; o.Changed(false); });
 
                 if (o.ToggleImmersive != null)
                 {
@@ -1164,7 +1166,7 @@ namespace NostalgiaPlus.Ui
                     imm.Tag = "For watching rather than measuring: bloom on the spectrograms,\n"
                                       + "a musical axis, slower scroll, and every label fading away\n"
                                       + "while you are not touching anything.";
-                    imm.Checked = s.FsImmersive;
+                    imm.Checked = s.Immersive;
                     OnClick(imm, delegate { o.ToggleImmersive(); });
                     m.DropDownItems.Add(imm);
                 }
@@ -1232,17 +1234,17 @@ namespace NostalgiaPlus.Ui
                           + "watching a whole section as one shape gets much easier.",
                           s.ImmCinematic,
                           delegate { s.ImmCinematic = !s.ImmCinematic; o.Changed(false); });
-                imm2.Enabled = s.FsImmersive;
+                imm2.Enabled = s.Immersive;
                 m.DropDownItems.Add(imm2);
 
                 AddToggle(m.DropDownItems, "Glow",
                           "Bloom around bright spectrogram content. The most expensive thing\n"
                           + "drawn each frame - turn it off first if frames are dropping.",
-                          s.FsGlow, delegate { s.FsGlow = !s.FsGlow; o.Changed(false); });
+                          s.Glow, delegate { s.Glow = !s.Glow; o.Changed(false); });
                 AddToggle(m.DropDownItems, "Hide labels when idle",
                           "Fade the furniture out after a few seconds without input, and bring\n"
                           + "it straight back on the next mouse move or keystroke.",
-                          s.FsAutoHide, delegate { s.FsAutoHide = !s.FsAutoHide; o.Changed(false); });
+                          s.AutoHide, delegate { s.AutoHide = !s.AutoHide; o.Changed(false); });
 
                 m.DropDownItems.Add(new ToolStripSeparator());
 
@@ -1250,7 +1252,7 @@ namespace NostalgiaPlus.Ui
                           "A scrolling waveform under each pane. It advances on the same tick\n"
                           + "as the spectrogram above it, so a transient sits directly under\n"
                           + "the column that produced it at any scroll speed.",
-                          s.FsShowWaveform, delegate { s.FsShowWaveform = !s.FsShowWaveform; o.Changed(true); });
+                          s.ShowWaveform, delegate { s.ShowWaveform = !s.ShowWaveform; o.Changed(true); });
 
                 AddToggle(m.DropDownItems, "Centre deck  (O)",
                           "Fills the gap between the two waveform lanes - the one part of\n"
@@ -1421,7 +1423,10 @@ namespace NostalgiaPlus.Ui
                 }
                 m.DropDownItems.Add(wave);
             }
-            else
+
+            // These three are the genuine difference between the views: fullscreen has
+            // no colour bar or status line of its own, and no host panel to resize.
+            if (!o.IsFullscreen)
             {
                 AddToggle(m.DropDownItems, "Colour bar",
                           "The palette ramp down the right edge, labelled with the current\n"

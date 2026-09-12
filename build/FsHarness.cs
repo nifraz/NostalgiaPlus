@@ -117,8 +117,8 @@ class FsHarness
 
     static void ApplyFlags(Settings s)
     {
-        if (Flag("noglow")) s.FsGlow = false;
-        if (Flag("nowave")) s.FsShowWaveform = false;
+        if (Flag("noglow")) s.Glow = false;
+        if (Flag("nowave")) s.ShowWaveform = false;
         if (Flag("nogrid")) s.ShowGrid = false;
         if (Flag("nodeck")) s.ShowCenterDeck = false;
         // The deck only gets the gap the two graph strips leave, so a wide setting is
@@ -176,7 +176,7 @@ class FsHarness
         var settings = new Settings();
         settings.ApplyPreset(Preset.Immersive);
         settings.MirrorLeftPane = true;   // verify the new centre-out arrangement
-        settings.FsAutoHide = false;      // keep axes and readout visible for the capture
+        settings.AutoHide = false;      // keep axes and readout visible for the capture
         settings.CurveWidthPct = 12;
         settings.ShowHarmonics = false;
         settings.LabelMode = AxisLabelMode.Notes;

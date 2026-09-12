@@ -157,7 +157,12 @@ namespace NostalgiaPlus.Ui
                 // it now, and it was taking room they need more than it does.
                 int square = Math.Min(h, gap.Width / 5);
                 if (s.DeckShowGoniometer && square >= 24)
-                    _gonio = new Rectangle(gap.X + gap.Width / 2 - square / 2, y, square, h);
+                    // Square, and centred in the band rather than stretched down it.
+                    // The plot inside was always circular - it takes the smaller of the
+                    // two sides - so a tall box just drew a tall frame around a small
+                    // trace, which reads as a bug in the instrument.
+                    _gonio = new Rectangle(gap.X + gap.Width / 2 - square / 2,
+                                           y + (h - square) / 2, square, square);
 
                 int mid = gap.X + gap.Width / 2;
                 int leftEnd = _gonio.Width > 0 ? _gonio.Left - Pad : mid - Pad;

@@ -121,7 +121,7 @@ namespace NostalgiaPlus
         /// </summary>
         public bool SeekOnImageClick = true;
         /// <summary>Master switch for all fullscreen on-screen display.</summary>
-        public bool FsShowOsd = true;
+        public bool ShowOsd = true;
 
         // --- quick action bar (both views) ---
         /// <summary>Row of one-click cycling buttons along the bottom of the view.</summary>
@@ -194,11 +194,11 @@ namespace NostalgiaPlus
         // --- fullscreen mirrored stereo view ---
         /// <summary>Centre label gutter. Shared: both views lay panes out identically.</summary>
         public int GutterWidth = 34;
-        public bool FsShowWaveform = true;
+        public bool ShowWaveform = true;
         /// <summary>Glow and auto-hiding furniture, for watching rather than measuring.</summary>
-        public bool FsImmersive = false;
-        public bool FsGlow = true;
-        public bool FsAutoHide = true;
+        public bool Immersive = false;
+        public bool Glow = true;
+        public bool AutoHide = true;
 
         // --- immersion: how the picture responds to the music itself ---
         /// <summary>The album art, blurred and dimmed, behind everything.</summary>
@@ -325,7 +325,7 @@ namespace NostalgiaPlus
                     TiltDbPerOctave = 0.0;
                     Aggregate = BandAggregate.Peak;
                     AdaptiveRange = true;
-                    FsImmersive = false;
+                    Immersive = false;
                     break;
 
                 case Preset.QC:
@@ -339,7 +339,7 @@ namespace NostalgiaPlus
                     Aggregate = BandAggregate.Energy;
                     AdaptiveRange = false;
                     FloorDb = -110; CeilingDb = 0;
-                    FsImmersive = false;
+                    Immersive = false;
                     break;
 
                 case Preset.Immersive:
@@ -355,10 +355,10 @@ namespace NostalgiaPlus
                     AdaptiveRange = true;
                     Contrast = 0.55;
                     ScrollDivider = 2;
-                    FsImmersive = true;
-                    FsGlow = true;
-                    FsAutoHide = true;
-                    FsShowWaveform = true;
+                    Immersive = true;
+                    Glow = true;
+                    AutoHide = true;
+                    ShowWaveform = true;
                     break;
 
                 case Preset.Vocal:
@@ -371,7 +371,7 @@ namespace NostalgiaPlus
                     Aggregate = BandAggregate.Peak;
                     AdaptiveRange = true; Contrast = 0.45;
                     ScrollDivider = 2;
-                    FsImmersive = false;
+                    Immersive = false;
                     break;
 
                 case Preset.Bass:
@@ -385,7 +385,7 @@ namespace NostalgiaPlus
                     Aggregate = BandAggregate.Peak;
                     AdaptiveRange = true; Contrast = 0.35;
                     ScrollDivider = 2;
-                    FsImmersive = false;
+                    Immersive = false;
                     break;
 
                 case Preset.Percussion:
@@ -399,7 +399,7 @@ namespace NostalgiaPlus
                     Aggregate = BandAggregate.Peak;
                     AdaptiveRange = true; Contrast = 0.60;
                     ScrollDivider = 1;
-                    FsImmersive = false;
+                    Immersive = false;
                     break;
 
                 case Preset.Mastering:
@@ -414,7 +414,7 @@ namespace NostalgiaPlus
                     AdaptiveRange = false;
                     FloorDb = -120; CeilingDb = 0;
                     ScrollDivider = 2;
-                    FsImmersive = false;
+                    Immersive = false;
                     break;
 
                 default: // Studio
@@ -425,7 +425,7 @@ namespace NostalgiaPlus
                     TiltDbPerOctave = 3.0;
                     Aggregate = BandAggregate.Peak;
                     AdaptiveRange = true;
-                    FsImmersive = false;
+                    Immersive = false;
                     break;
             }
         }
@@ -698,7 +698,7 @@ namespace NostalgiaPlus
                 s.ShowHoverPin = ParseBool(map, "ShowHoverPin", s.ShowHoverPin);
                 s.ShowHarmonics = ParseBool(map, "ShowHarmonics", s.ShowHarmonics);
                 s.SeekOnImageClick = ParseBool(map, "SeekOnImageClick", s.SeekOnImageClick);
-                s.FsShowOsd = ParseBool(map, "FsShowOsd", s.FsShowOsd);
+                s.ShowOsd = ParseBool(map, "ShowOsd", ParseBool(map, "FsShowOsd", s.ShowOsd));
                 s.BarSize = (int)ParseDouble(map, "BarSize", s.BarSize);
                 s.LedSegment = (int)ParseDouble(map, "LedSegment", s.LedSegment);
                 s.DockPanelHeight = (int)ParseDouble(map, "DockPanelHeight", s.DockPanelHeight);
@@ -730,10 +730,15 @@ namespace NostalgiaPlus
                 s.DeckShowBpm = ParseBool(map, "DeckShowBpm", s.DeckShowBpm);
                 s.DeckShowBrightness = ParseBool(map, "DeckShowBrightness", s.DeckShowBrightness);
                 s.QuickBarSplit = ParseBool(map, "QuickBarSplit", s.QuickBarSplit);
-                s.FsShowWaveform = ParseBool(map, "FsShowWaveform", s.FsShowWaveform);
-                s.FsImmersive = ParseBool(map, "FsImmersive", s.FsImmersive);
-                s.FsGlow = ParseBool(map, "FsGlow", s.FsGlow);
-                s.FsAutoHide = ParseBool(map, "FsAutoHide", s.FsAutoHide);
+                // These five lost their Fs prefix when the docked panel gained them:
+                // they are not fullscreen settings any more. An existing file still
+                // carries the old keys, so they are read as the fallback rather than
+                // quietly resetting someone's display on upgrade.
+                s.ShowWaveform = ParseBool(map, "ShowWaveform",
+                                           ParseBool(map, "FsShowWaveform", s.ShowWaveform));
+                s.Immersive = ParseBool(map, "Immersive", ParseBool(map, "FsImmersive", s.Immersive));
+                s.Glow = ParseBool(map, "Glow", ParseBool(map, "FsGlow", s.Glow));
+                s.AutoHide = ParseBool(map, "AutoHide", ParseBool(map, "FsAutoHide", s.AutoHide));
                 s.ImmBackdrop = ParseBool(map, "ImmBackdrop", s.ImmBackdrop);
                 s.BackdropPct = (int)ParseDouble(map, "BackdropPct", s.BackdropPct);
                 s.ImmBeatReactive = ParseBool(map, "ImmBeatReactive", s.ImmBeatReactive);
@@ -806,7 +811,7 @@ namespace NostalgiaPlus
                 sb.AppendLine("ShowHoverPin=" + ShowHoverPin);
                 sb.AppendLine("ShowHarmonics=" + ShowHarmonics);
                 sb.AppendLine("SeekOnImageClick=" + SeekOnImageClick);
-                sb.AppendLine("FsShowOsd=" + FsShowOsd);
+                sb.AppendLine("ShowOsd=" + ShowOsd);
                 sb.AppendLine("BarSize=" + BarSize);
                 sb.AppendLine("LedSegment=" + LedSegment);
                 sb.AppendLine("DockPanelHeight=" + DockPanelHeight);
@@ -835,10 +840,10 @@ namespace NostalgiaPlus
                 sb.AppendLine("DeckShowBpm=" + DeckShowBpm);
                 sb.AppendLine("DeckShowBrightness=" + DeckShowBrightness);
                 sb.AppendLine("QuickBarSplit=" + QuickBarSplit);
-                sb.AppendLine("FsShowWaveform=" + FsShowWaveform);
-                sb.AppendLine("FsImmersive=" + FsImmersive);
-                sb.AppendLine("FsGlow=" + FsGlow);
-                sb.AppendLine("FsAutoHide=" + FsAutoHide);
+                sb.AppendLine("ShowWaveform=" + ShowWaveform);
+                sb.AppendLine("Immersive=" + Immersive);
+                sb.AppendLine("Glow=" + Glow);
+                sb.AppendLine("AutoHide=" + AutoHide);
                 sb.AppendLine("ImmBackdrop=" + ImmBackdrop);
                 sb.AppendLine("BackdropPct=" + BackdropPct);
                 sb.AppendLine("ImmBeatReactive=" + ImmBeatReactive);

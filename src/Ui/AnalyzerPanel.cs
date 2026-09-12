@@ -14,7 +14,10 @@ namespace NostalgiaPlus.Ui
     /// <summary>
     /// The docked panel. Two side-by-side per-channel panes - each a spectrum curve
     /// beside its own spectrogram, sharing a vertical frequency axis - with a note gutter
-    /// between them. Identical rendering to the fullscreen view, via <see cref="StereoScope"/>.
+    /// between them. Identical rendering to the fullscreen view, via <see cref="StereoScope"/>,
+    /// and the same waveform lanes, centre deck and immersive treatment through
+    /// <see cref="BottomBand"/> and <see cref="Immersion"/> - every setting means the
+    /// same thing in both, so switching between them changes the size and nothing else.
     /// </summary>
     public sealed class AnalyzerPanel : UserControl
     {
@@ -24,6 +27,10 @@ namespace NostalgiaPlus.Ui
         private readonly Settings _settings;
         private readonly string _storageDir;
         private readonly StereoScope _scope = new StereoScope();
+        // The same two the fullscreen view uses. The docked panel used to have neither,
+        // which made it a different instrument rather than a smaller one.
+        private readonly BottomBand _band = new BottomBand();
+        private readonly Immersion _imm = new Immersion();
         private readonly object _gate = new object();
 
         private LoopbackCapture _capture;
@@ -39,6 +46,7 @@ namespace NostalgiaPlus.Ui
         private bool _ownsCapture = true;
 
         private Rectangle _barRect;
+        private DateTime _infoUntil = DateTime.MinValue;
         private readonly QuickBar _quick = new QuickBar();
         private Font _font, _fontSmall;
         private double _fps, _lastAnalysisMs;
@@ -48,8 +56,20 @@ namespace NostalgiaPlus.Ui
         private Bitmap _barCache;
         private int[] _barCacheLut;
 
-        /// <summary>Host player access, handed on to the fullscreen view.</summary>
-        public PlayerBridge Player { get; set; }
+        private PlayerBridge _player;
+
+        /// <summary>Host player access, shared with the deck and the fullscreen view.</summary>
+        public PlayerBridge Player
+        {
+            get { return _player; }
+            set
+            {
+                _player = value;
+                // Handed over after construction, so the deck would otherwise sit empty
+                // until the next track change - which on a paused player never comes.
+                if (value != null) _band.SetTrack(value.SafeInfo());
+            }
+        }
 
         /// <summary>Raised when the user picks a docked height; the plugin owns the host control.</summary>
         public Action<int> DockHeightRequested { get; set; }
@@ -83,6 +103,7 @@ namespace NostalgiaPlus.Ui
                     HasSnapshot = delegate { lock (_gate) { return _scope.HasSnapshot; } },
                     ToggleFreeze = delegate { SetFrozen(!_frozen); },
                     ToggleFullscreen = ToggleFullscreen,
+                    ToggleImmersive = ToggleImmersive,
                     SetDockHeight = delegate(int px)
                     {
                         if (DockHeightRequested != null) DockHeightRequested(px);
@@ -158,6 +179,8 @@ namespace NostalgiaPlus.Ui
             {
                 StopCapture();
                 _scope.Dispose();
+                _band.Dispose();
+                _imm.Dispose();
                 if (_barCache != null) { _barCache.Dispose(); _barCache = null; }
                 if (_font != null) _font.Dispose();
                 if (_fontSmall != null) _fontSmall.Dispose();
@@ -168,6 +191,10 @@ namespace NostalgiaPlus.Ui
         public void NotifyTrackChanged()
         {
             _scope.ResetRange();
+            // The docked deck shows what is playing too, so it needs telling.
+            if (Player != null) _band.SetTrack(Player.SafeInfo());
+            _band.Reset();
+            _infoUntil = DateTime.UtcNow.AddSeconds(6);
             FullscreenView fs = _fullscreen;
             if (fs != null && !fs.IsDisposed)
             {
@@ -212,15 +239,28 @@ namespace NostalgiaPlus.Ui
                 int barW = _settings.ShowColorBar ? ColorBarWidth : 0;
                 _barRect = new Rectangle(w - barW, 0, barW, h);
 
-                // The quick bar takes reserved space off the bottom rather than floating
-                // over the spectrogram, so nothing it covers is ever lost.
+                // Bottom-up: the band first, then the quick bar out of what is left,
+                // then the panes out of the remainder. Everything here takes reserved
+                // space rather than floating over the spectrogram, so nothing any of it
+                // covers is ever lost.
+                var view = new Rectangle(0, 0, Math.Max(16, w - barW), h);
+                int bandH = BottomBand.HeightFor(_settings, h);
+
                 Rectangle quickBar;
-                Rectangle area = QuickBar.Reserve(new Rectangle(0, 0, Math.Max(16, w - barW), h),
-                                                 _settings, _fontSmall, out quickBar);
-                _quick.Layout(quickBar, _fontSmall, _settings.QuickBarCompact);
+                Rectangle area = QuickBar.Reserve(
+                    new Rectangle(view.X, view.Y, view.Width, Math.Max(16, h - bandH)),
+                    _settings, _fontSmall, out quickBar);
 
                 double sr = _capture != null ? _capture.SampleRate : 48000;
                 _scope.Layout(area, _settings, sr);
+
+                Rectangle gut = _scope.GutterRect;
+                if (_settings.QuickBarSplit && gut.Width > 0)
+                    _quick.Layout(quickBar, _fontSmall, _settings.QuickBarCompact, gut.Left, gut.Right);
+                else
+                    _quick.Layout(quickBar, _fontSmall, _settings.QuickBarCompact);
+
+                _band.Layout(view, bandH, _settings, _scope.Panes, _fontSmall);
             }
         }
 
@@ -248,7 +288,18 @@ namespace NostalgiaPlus.Ui
                     frameTimer.Restart();
                     if (!_paused)
                     {
-                        try { lock (_gate) { _scope.Analyse(_capture, _settings, dt, _frozen); } }
+                        try
+                        {
+                            // Before the scope: the band consumes the ring from its own
+                            // cursor, so the meters see every sample rather than
+                            // whatever the FFT happened to take.
+                            _band.Feed(_capture, _settings);
+                            lock (_gate)
+                            {
+                                _scope.Analyse(_capture, _settings, dt, _frozen);
+                                if (!_frozen && _scope.PushedColumn) _band.PushColumn();
+                            }
+                        }
                         catch { /* a transient frame error must not kill the thread */ }
                     }
                     frameTimer.Stop();
@@ -277,7 +328,25 @@ namespace NostalgiaPlus.Ui
         {
             Graphics g = e.Graphics;
             g.TextRenderingHint = TextRenderingHint.SingleBitPerPixelGridFit;
+
+            double centroid, brightness, pulse;
+            ChannelPane[] panes;
+            lock (_gate)
+            {
+                centroid = _scope.Features.Centroid;
+                brightness = _scope.CentroidHz;
+                pulse = _scope.Features.Pulse;
+                panes = _scope.Panes;
+            }
+            int[] hued = _imm.UpdateHue(_settings, centroid);
+            if (hued != null) { _lut = hued; lock (_gate) { _scope.SetPalette(_lut); } }
+
+            var client = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height);
             g.Clear(Settings.Pick(_settings.ColBackground, Palette.Background(_lut)));
+            _imm.DrawBackdrop(g, _settings, client, Player, panes);
+
+            double furniture = _settings.ShowOsd ? _imm.FurnitureAlpha(_settings) : 0.0;
+            bool glow = _settings.Immersive && _settings.Glow;
 
             // The status line is chrome over the image, so it starts below the scale
             // strip; the pane insets stay relative to the image, which already does.
@@ -286,19 +355,30 @@ namespace NostalgiaPlus.Ui
             {
                 chromeTop = _scope.ChromeTop;
                 inset = _settings.ShowStatus ? 14 : 0;
-                _scope.DrawPanes(g, _settings, false, _fontSmall, 1.0, inset);
-                if (_settings.ShowGrid)
-                    _scope.DrawGrid(g, _settings, _fontSmall, 1.0,
+                _scope.DrawPanes(g, _settings, glow, _fontSmall, furniture, inset);
+                if (_settings.ShowGrid && furniture > 0.004)
+                    _scope.DrawGrid(g, _settings, _fontSmall, furniture,
                                     _settings.ShowStatus ? chromeTop + 16 : 0);
                 // Keep the channel labels clear of the status line.
-                if (_settings.ShowLabels) _scope.DrawPaneLabels(g, _fontSmall, 1.0, inset);
+                if (_settings.ShowLabels) _scope.DrawPaneLabels(g, _fontSmall, furniture, inset);
+            }
+
+            if (_settings.ShowOsd)
+            {
+                double infoAlpha = DateTime.UtcNow < _infoUntil ? 1.0 : 0.0;
+                lock (_gate)
+                    _band.Draw(g, _settings, _fontSmall, _font, furniture, infoAlpha,
+                               _lut, Player, _scope.Features, brightness, panes);
             }
 
             if (_settings.ShowColorBar && _barRect.Width > 0) DrawColorBar(g);
-            _quick.Draw(g, _fontSmall, 1.0, _settings.QuickBarCompact);
-            if (_settings.ShowStatus) DrawStatus(g, chromeTop);
-            if (_settings.ShowHud && _hover.Active)
+            if (furniture > 0.004 && _settings.ShowOsd)
+                _quick.Draw(g, _fontSmall, furniture, _settings.QuickBarCompact);
+            if (_settings.ShowStatus && furniture > 0.004) DrawStatus(g, chromeTop);
+            if (_settings.ShowHud && _hover.Active && _settings.ShowOsd && furniture > 0.004)
                 _scope.DrawHover(g, _hover, _settings, _font, _fontSmall);
+
+            _imm.DrawBeatFlare(g, _settings, client, _lut, pulse);
         }
 
         private void DrawColorBar(Graphics g)
@@ -408,7 +488,7 @@ namespace NostalgiaPlus.Ui
         {
             base.OnMouseDoubleClick(e);
             if (e.Button != MouseButtons.Left) return;
-            if (_quick.Contains(e.Location)) return;
+            if (_quick.Contains(e.Location) || _band.Contains(e.Location)) return;
             SeekToImage(e.Location);
         }
 
@@ -418,7 +498,7 @@ namespace NostalgiaPlus.Ui
             if (!Focused) { try { Focus(); } catch { } }
             if (e.Button != MouseButtons.Left) return;
             // A press on a button is that button's, not the start of a measurement.
-            if (_quick.Contains(e.Location)) return;
+            if (_quick.Contains(e.Location) || _band.Contains(e.Location)) return;
             _mouseDown = true;
             _dragged = false;
             _hover.Origin = e.Location;
@@ -430,6 +510,7 @@ namespace NostalgiaPlus.Ui
             base.OnMouseUp(e);
             if (e.Button != MouseButtons.Left) return;
             if (_quick.Click(e.Location)) { _mouseDown = false; Invalidate(); return; }
+            if (_band.Click(e.Location, Player)) { _mouseDown = false; Invalidate(); return; }
             _mouseDown = false;
             if (!_dragged) SetFrozen(!_frozen);
         }
@@ -457,12 +538,62 @@ namespace NostalgiaPlus.Ui
             Invalidate();
         }
 
+        /// <summary>
+        /// Entering immersive mode also applies the Immersive preset: the visual
+        /// treatment cannot rescue a linear axis at the lowest resolution, which is
+        /// what makes dense music render as an undifferentiated wall.
+        /// </summary>
+        public void ToggleImmersive()
+        {
+            if (_settings.Immersive)
+            {
+                _settings.Immersive = false;
+                _settings.Preset = Preset.Custom;
+            }
+            else _settings.ApplyPreset(Preset.Immersive);
+            OnSettingsChanged(true);
+        }
+
+        /// <summary>
+        /// The same keys as the fullscreen view, so the two are not two things to
+        /// learn. F11 swaps between them and everything else means what it does there.
+        /// </summary>
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (keyData == Keys.Space) { SetFrozen(!_frozen); return true; }
-            if (keyData == Keys.A) { ToggleSnapshot(); return true; }
-            if (keyData == Keys.F11) { ToggleFullscreen(); return true; }
-            if (keyData == Keys.F1) { ShowHelp(); return true; }
+            _imm.Touch();
+            switch (keyData)
+            {
+                case Keys.F1: ShowHelp(); return true;
+                case Keys.F11: ToggleFullscreen(); return true;
+                case Keys.Space: SetFrozen(!_frozen); return true;
+                case Keys.A: ToggleSnapshot(); return true;
+                case Keys.I: ToggleImmersive(); return true;
+                case Keys.W:
+                    _settings.ShowWaveform = !_settings.ShowWaveform;
+                    OnSettingsChanged(true); return true;
+                case Keys.O:
+                    _settings.ShowCenterDeck = !_settings.ShowCenterDeck;
+                    OnSettingsChanged(true); return true;
+                case Keys.G:
+                    _settings.ShowGrid = !_settings.ShowGrid;
+                    OnSettingsChanged(false); return true;
+                case Keys.H:
+                    _settings.ShowOsd = !_settings.ShowOsd;
+                    OnSettingsChanged(false); return true;
+                case Keys.B:
+                    _settings.Style = QuickBar.Next(_settings.Style);
+                    OnSettingsChanged(false); return true;
+                case Keys.C:
+                    _settings.PairMode = QuickBar.Next(_settings.PairMode);
+                    OnSettingsChanged(true); return true;
+                case Keys.M:
+                    _settings.MirrorLeftPane = !_settings.MirrorLeftPane;
+                    OnSettingsChanged(true); return true;
+                case Keys.P:
+                    _settings.Palette = QuickBar.Next(_settings.Palette);
+                    _settings.Preset = Preset.Custom;
+                    OnSettingsChanged(false); return true;
+            }
             return base.ProcessCmdKey(ref msg, keyData);
         }
     }

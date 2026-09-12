@@ -488,6 +488,10 @@ class TestHarness
         int gonMid = deck.GoniometerRect.Left + deck.GoniometerRect.Width / 2;
         Check("the goniometer is centred", Math.Abs(gonMid - deckMid) <= 1,
               "centre " + gonMid + ", deck centre " + deckMid);
+        // Square, or the Lissajous plot sits in a frame the wrong shape for it.
+        Check("and square",
+              deck.GoniometerRect.Width == deck.GoniometerRect.Height,
+              deck.GoniometerRect.Width + "x" + deck.GoniometerRect.Height);
         int leftHalf = deck.GoniometerRect.Left;
         int rightHalf = 1200 - deck.GoniometerRect.Right;
         Check("and leaves equal halves", Math.Abs(leftHalf - rightHalf) <= 2,
