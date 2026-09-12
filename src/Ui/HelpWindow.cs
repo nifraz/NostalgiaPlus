@@ -208,9 +208,19 @@ namespace NostalgiaPlus.Ui
                 + "Correlation says the same thing as a number: +1 is mono, 0 is uncorrelated, and "
                 + "negative means the channels partly cancel and the track will lose material when "
                 + "summed to mono. Balance is simply which side is louder.\n\n"
-                + "Alongside them are the transport, elapsed time, a seek bar you can click, and the "
-                + "album art. Whatever does not fit the gap is dropped - artwork first, the goniometer "
-                + "last.", 1);
+                + "Alongside them are the album art and what is playing, the transport with elapsed "
+                + "time and a seek bar you can click, and the four loudness readouts: LUFS momentary "
+                + "and short term, true peak, and crest factor. True peak turns red above -1 dBTP, "
+                + "where a lossy encoder will clip even though the samples never did.\n\n"
+                + "The title and those readouts used to float in the top corners of the screen, on a "
+                + "bar painted over the top of both spectrograms. They cost the image nothing here, "
+                + "and the repeated frequency labels now run the full height of the axis instead of "
+                + "starting 84 pixels down to stay clear of the bar.\n\n"
+                + "Every item has its own switch under View - Centre deck contents. The deck only "
+                + "gets the gap the two graph strips leave, so it holds what fits and drops the rest: "
+                + "artwork first, then the loudness columns, then the title, and the transport block "
+                + "last. The goniometer always stays. Widen the graph strips to make room for more, "
+                + "or press O to hide the deck altogether.", 1);
 
             Add(S, "Mouse and keyboard",
                 "Click anywhere on the image to freeze it, and click again to release. Analysis keeps "
@@ -221,7 +231,7 @@ namespace NostalgiaPlus.Ui
                 + "Drag to measure: the readout reports the interval in semitones and the time between "
                 + "the two points.\n\n"
                 + "Keys, in the fullscreen view: F11 or Esc leaves, Space freezes, I toggles immersive "
-                + "mode, H hides the on-screen display, O the meters and track info, W the waveform "
+                + "mode, H hides the on-screen display, O the centre deck, W the waveform "
                 + "lanes, G the gridlines, M mirror, B the graph style, C the channel mode, P the "
                 + "palette. F1 opens this window. In the docked panel, F11 goes fullscreen and Space "
                 + "freezes.", 1);

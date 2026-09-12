@@ -253,10 +253,19 @@ namespace NostalgiaPlus.Render
 
             int h = _panes[0].SpectroRect.Height;
             int top = _panes[0].SpectroRect.Top;
-            if (GutterRect.Width > 0)
-                using (var bg = new SolidBrush(FadeColor(
-                           Settings.PickKeepAlpha(s.ColPanel, Color.FromArgb(255, 12, 12, 15)), alpha)))
-                    g.FillRectangle(bg, GutterRect);
+            // All three label columns stand on the same ground. The outer two used to be
+            // bare window background, so a bright spectrogram edge - or, in immersive
+            // mode, the album-art backdrop - ran straight up against the numbers.
+            using (var bg = new SolidBrush(FadeColor(
+                       Settings.PickKeepAlpha(s.ColPanel, Color.FromArgb(255, 12, 12, 15)), alpha)))
+            {
+                if (GutterRect.Width > 0) g.FillRectangle(bg, GutterRect);
+                if (OuterLeftRect.Width > 0)
+                {
+                    g.FillRectangle(bg, OuterLeftRect);
+                    g.FillRectangle(bg, OuterRightRect);
+                }
+            }
 
             // After the gutter is filled, not before: the fill covers the whole column
             // and was painting over the caption.

@@ -1216,48 +1216,93 @@ namespace NostalgiaPlus.Ui
 
                 m.DropDownItems.Add(new ToolStripSeparator());
 
-                AddToggle(m.DropDownItems, "Meters and track info  (O)",
-                          "The title bar, and the loudness meters: LUFS momentary and short\n"
-                          + "term, true peak and crest factor. Correlation and balance live in\n"
-                          + "the centre deck, beside the goniometer they describe.",
-                          s.FsShowOverlays, delegate { s.FsShowOverlays = !s.FsShowOverlays; o.Changed(false); });
                 AddToggle(m.DropDownItems, "Waveform lanes  (W)",
                           "A scrolling waveform under each pane. It advances on the same tick\n"
                           + "as the spectrogram above it, so a transient sits directly under\n"
                           + "the column that produced it at any scroll speed.",
                           s.FsShowWaveform, delegate { s.FsShowWaveform = !s.FsShowWaveform; o.Changed(true); });
 
-                AddToggle(m.DropDownItems, "Centre deck",
+                AddToggle(m.DropDownItems, "Centre deck  (O)",
                           "Fills the gap between the two waveform lanes - the one part of\n"
-                          + "the screen that belongs to neither channel - with the things\n"
-                          + "that describe both: the goniometer, correlation and balance,\n"
-                          + "the transport and the artwork.",
+                          + "the screen that belongs to neither channel - with everything\n"
+                          + "that describes both: what is playing, the goniometer,\n"
+                          + "correlation and balance, the transport, and the loudness\n"
+                          + "readouts. The title and the meters used to float in the top\n"
+                          + "corners, where they sat on the frequency axis and cost the\n"
+                          + "image the top of its range.",
                           s.ShowCenterDeck,
                           delegate { s.ShowCenterDeck = !s.ShowCenterDeck; o.Changed(true); });
 
-                var deck = Sub("Centre deck contents", "What the deck shows. Anything that will not fit the gap is\n"
-                                                       + "dropped, artwork first and the goniometer last.");
+                var deck = Sub("Centre deck contents", "One switch per readout. Anything that will not fit the gap is\n"
+                                                       + "dropped anyway - artwork first, then the loudness columns, then\n"
+                                                       + "correlation, the title and the transport. The goniometer is the\n"
+                                                       + "last thing standing.");
+                AddToggle(deck.DropDownItems, "Track info",
+                          "Title, then artist and album. Trimmed with an ellipsis rather\n"
+                          + "than allowed to run into the goniometer beside it, so widen\n"
+                          + "the graph strips if long titles are being cut.\n"
+                          + "A track change shows this at full strength for six seconds\n"
+                          + "even when the rest of the furniture has faded out.",
+                          s.DeckShowTrackInfo,
+                          delegate { s.DeckShowTrackInfo = !s.DeckShowTrackInfo; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "Album art",
+                          "The current track's artwork. Dropped first when the gap is narrow -\n"
+                          + "widen the graph strips to make room for it.",
+                          s.DeckShowArtwork,
+                          delegate { s.DeckShowArtwork = !s.DeckShowArtwork; o.Changed(true); });
+
+                deck.DropDownItems.Add(new ToolStripSeparator());
+
                 AddToggle(deck.DropDownItems, "Goniometer",
                           "A Lissajous plot of left against right, rotated so mono reads as\n"
                           + "a vertical line. A circle is a wide image, a horizontal line is\n"
                           + "out of phase, and a lean to one side is a level imbalance.",
                           s.DeckShowGoniometer,
                           delegate { s.DeckShowGoniometer = !s.DeckShowGoniometer; o.Changed(true); });
-                AddToggle(deck.DropDownItems, "Correlation and balance",
+                AddToggle(deck.DropDownItems, "Correlation",
                           "+1 is mono, 0 is uncorrelated, -1 means the channels cancel and\n"
-                          + "the track will not survive being summed to mono.",
-                          s.DeckShowMeters,
-                          delegate { s.DeckShowMeters = !s.DeckShowMeters; o.Changed(true); });
+                          + "the track will not survive being summed to mono. The number the\n"
+                          + "goniometer's shape is telling you.",
+                          s.DeckShowCorrelation,
+                          delegate { s.DeckShowCorrelation = !s.DeckShowCorrelation; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "Balance",
+                          "Which side is louder, as a centre-zero bar. Anything but a hair\n"
+                          + "off centre on a whole track is usually the recording, not you.",
+                          s.DeckShowBalance,
+                          delegate { s.DeckShowBalance = !s.DeckShowBalance; o.Changed(true); });
+
+                deck.DropDownItems.Add(new ToolStripSeparator());
+
                 AddToggle(deck.DropDownItems, "Transport and position",
                           "Previous, play/pause and next, with elapsed time and a seek bar\n"
                           + "you can click to jump.",
                           s.DeckShowTransport,
                           delegate { s.DeckShowTransport = !s.DeckShowTransport; o.Changed(true); });
-                AddToggle(deck.DropDownItems, "Album art",
-                          "The current track's artwork. Dropped first when the gap is narrow -\n"
-                          + "widen the graph strips to make room for it.",
-                          s.DeckShowArtwork,
-                          delegate { s.DeckShowArtwork = !s.DeckShowArtwork; o.Changed(true); });
+
+                deck.DropDownItems.Add(new ToolStripSeparator());
+
+                AddToggle(deck.DropDownItems, "LUFS momentary",
+                          "Perceived loudness over the last 400ms, gated to the BS.1770\n"
+                          + "curve. This is the one that moves with the music.",
+                          s.DeckShowLufsM,
+                          delegate { s.DeckShowLufsM = !s.DeckShowLufsM; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "LUFS short term",
+                          "The same measure over three seconds. Steadier, and the figure\n"
+                          + "to compare between tracks when you are matching levels.",
+                          s.DeckShowLufsS,
+                          delegate { s.DeckShowLufsS = !s.DeckShowLufsS; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "True peak",
+                          "The peak of the reconstructed waveform, not of the samples -\n"
+                          + "they are not the same, and the difference is what clips a\n"
+                          + "lossy encoder. Turns red above -1 dBTP.",
+                          s.DeckShowTruePeak,
+                          delegate { s.DeckShowTruePeak = !s.DeckShowTruePeak; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "Crest factor",
+                          "Peak minus RMS: how much room the transients have. Around 15dB\n"
+                          + "is lively, under 8dB is a loudness-war master with the life\n"
+                          + "squeezed out of it.",
+                          s.DeckShowCrest,
+                          delegate { s.DeckShowCrest = !s.DeckShowCrest; o.Changed(true); });
                 deck.Enabled = s.ShowCenterDeck;
                 m.DropDownItems.Add(deck);
 

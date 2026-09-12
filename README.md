@@ -127,10 +127,21 @@ Curve baselines are pinned to the screen edges and grow inward.
 At 1920x1080 that gives about 108 px per octave - roughly 9 px per semitone, enough for
 semitone gridlines to stay legible - and around 14 seconds of history per side.
 
-Overlays: now playing (top left), L/R correlation and balance (top centre), and
-LUFS-M / LUFS-S / true peak / crest (top right, true peak turns red above -1 dBTP). A
-time-aligned waveform lane runs along the bottom, mirrored the same way and sharing the
-spectrograms' time axis.
+A time-aligned waveform lane runs along the bottom, mirrored the same way and sharing
+the spectrograms' time axis. The gap the two lanes leave in the middle is the **centre
+deck**, and everything that describes the pair of channels rather than one of them lives
+there: artwork and now playing, the goniometer, correlation and balance, the transport
+and seek bar, and LUFS-M / LUFS-S / true peak / crest (true peak turns red above
+-1 dBTP). Each of those has its own switch under *View - Centre deck contents*.
+
+Nothing is painted over the image. The title and the meters used to float in the top
+corners on a gradient bar, which covered the top of both spectrograms and pushed the
+repeated frequency labels 84 px down the axis to stay out from under it.
+
+The deck only gets the gap between the two graph strips, so it holds as much as fits and
+drops the rest - artwork first, then the loudness columns, then the title, and the
+transport block last. The goniometer always stays. Widen the graph strips
+(*View - Graph size*) to make room.
 
 Right-click anywhere for the full menu - the same one the docked panel uses, plus the
 fullscreen toggles and a curve-width setting.
@@ -141,7 +152,7 @@ fullscreen toggles and a curve-width setting.
 | `I` | Immersive mode |
 | `Space` | Freeze |
 | `W` | Waveform lane |
-| `O` | Overlays |
+| `O` | Centre deck |
 | `G` | Grid |
 | `P` | Cycle palette |
 
@@ -221,7 +232,8 @@ src/
     ColumnSpectrogram.cs   vertical-frequency variant plus the waveform ring
   Ui/
     AnalyzerPanel.cs       docked stereo panel: curve pane plus two spectrogram lanes
-    FullscreenView.cs      mirrored stereo view, overlays, waveform lanes
+    FullscreenView.cs      mirrored stereo view, waveform lanes, backdrop
+    CenterDeck.cs          now playing, goniometer, transport, loudness readouts
     MenuFactory.cs         the right-click menu shared by both views
 ```
 

@@ -65,9 +65,8 @@ namespace NostalgiaPlus.Ui
         private int _backdropPct = -1;
         private double _hueShift;
 
-        private Font _fontBig, _fontMid, _fontSmall, _fontTiny;
+        private Font _fontMid, _fontSmall, _fontTiny;
         private double _fps, _analysisMs, _paintMs;
-        private string _title = "", _artist = "", _album = "";
         private DateTime _hintUntil, _lastActivity = DateTime.UtcNow, _infoUntil = DateTime.MinValue;
         private bool _cursorHidden;
         private readonly HoverInfo _hover = new HoverInfo();
@@ -128,11 +127,9 @@ namespace NostalgiaPlus.Ui
         {
             float b = _settings.LabelFontSize;
             if (b < 5f) b = 5f; else if (b > 20f) b = 20f;
-            if (_fontBig != null) _fontBig.Dispose();
             if (_fontMid != null) _fontMid.Dispose();
             if (_fontSmall != null) _fontSmall.Dispose();
             if (_fontTiny != null) _fontTiny.Dispose();
-            _fontBig = new Font("Segoe UI Light", b + 15f);
             _fontMid = new Font("Segoe UI", b + 4f);
             _fontSmall = new Font("Segoe UI", b + 1.5f);
             _fontTiny = new Font("Segoe UI", b);
@@ -194,7 +191,6 @@ namespace NostalgiaPlus.Ui
                 _scope.Dispose();
                 _deck.Dispose();
                 if (_backdrop != null) { _backdrop.Dispose(); _backdrop = null; }
-                if (_fontBig != null) _fontBig.Dispose();
                 if (_fontMid != null) _fontMid.Dispose();
                 if (_fontSmall != null) _fontSmall.Dispose();
                 if (_fontTiny != null) _fontTiny.Dispose();
@@ -207,7 +203,8 @@ namespace NostalgiaPlus.Ui
             string[] info = _player.SafeInfo();
             if (info != null && info.Length >= 3)
             {
-                _title = info[0] ?? ""; _artist = info[1] ?? ""; _album = info[2] ?? "";
+                // Straight to the deck: it is the only thing that shows them now.
+                _deck.Title = info[0] ?? ""; _deck.Artist = info[1] ?? ""; _deck.Album = info[2] ?? "";
             }
             _infoUntil = DateTime.UtcNow.AddSeconds(6);
             lock (_gate) { _scope.ResetRange(); _meter.Reset(); }
@@ -584,18 +581,18 @@ namespace NostalgiaPlus.Ui
             }
 
             bool glow = _settings.FsImmersive && _settings.FsGlow;
-            // Track info and meters float over the image, so they begin below the scale
-            // strip; the pane insets are measured from the image, which already excludes it.
+            // With the track info and the meters moved into the deck, nothing is painted
+            // over the top of the image any more. Both insets go with the bar: the time
+            // marks start at the top of the pane again, and the outer frequency labels
+            // no longer skip the top 84px of the axis to stay out from under it.
             int chromeTop;
             lock (_gate)
             {
                 chromeTop = _scope.ChromeTop;
-                int inset = _settings.FsShowOverlays ? 84 : 0;
-                _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture, inset);
+                _scope.DrawPanes(g, _settings, glow, _fontTiny, furniture, 0);
                 if (_settings.ShowGrid && furniture > 0.004)
-                    _scope.DrawGrid(g, _settings, _fontTiny, furniture,
-                                    _settings.FsShowOverlays ? chromeTop + 84 : 0);
-                _scope.DrawPaneLabels(g, _fontSmall, furniture, inset);
+                    _scope.DrawGrid(g, _settings, _fontTiny, furniture, 0);
+                _scope.DrawPaneLabels(g, _fontSmall, furniture, 0);
             }
 
             // Gated on the same fade as everything else: once it reaches zero the
@@ -609,10 +606,15 @@ namespace NostalgiaPlus.Ui
             }
             if (_settings.FsShowWaveform && _waveARect.Height > 0) DrawWaveforms(g);
             if (_settings.ShowCenterDeck && _settings.FsShowOsd)
+            {
+                // A track change is announced at full strength for a few seconds even
+                // when the furniture has faded away, which is the one behaviour of the
+                // old corner overlay worth carrying across.
+                double infoAlpha = DateTime.UtcNow < _infoUntil ? 1.0 : 0.0;
                 lock (_gate)
-                    _deck.Draw(g, _settings, _fontTiny, furniture,
+                    _deck.Draw(g, _settings, _fontTiny, _fontMid, furniture, infoAlpha,
                                _lut, _meter, _player, _gonL, _gonR, _gonCount);
-            if (_settings.FsShowOverlays && _settings.FsShowOsd) DrawOverlays(g, furniture, chromeTop);
+            }
             if (furniture > 0.004 && _settings.FsShowOsd)
                 _quick.Draw(g, _fontTiny, furniture, _settings.QuickBarCompact);
             // Last, over everything: a beat is felt at the edge of vision, not read.
@@ -622,7 +624,7 @@ namespace NostalgiaPlus.Ui
                 lock (_gate) { pulse = _scope.Features.Pulse; }
                 DrawBeatFlare(g, pulse);
             }
-            if (_settings.FsShowOsd) DrawHint(g);
+            if (_settings.FsShowOsd) DrawHint(g, chromeTop);
         }
 
         private void DrawWaveforms(Graphics g)
@@ -676,69 +678,19 @@ namespace NostalgiaPlus.Ui
                 g.FillPolygon(brush, _wavePoly);
         }
 
-        private void DrawOverlays(Graphics g, double alpha, int top)
-        {
-            double infoAlpha = alpha;
-            if (DateTime.UtcNow < _infoUntil) infoAlpha = 1.0;
-            if (alpha <= 0.004 && infoAlpha <= 0.004) return;
-
-            int barH = 78;
-            using (var grad = new LinearGradientBrush(new Rectangle(0, top, ClientSize.Width, barH),
-                       StereoScope.FadeColor(Color.FromArgb(190, 0, 0, 0), Math.Max(alpha, infoAlpha)),
-                       Color.FromArgb(0, 0, 0, 0), LinearGradientMode.Vertical))
-                g.FillRectangle(grad, 0, top, ClientSize.Width, barH);
-
-            if (infoAlpha > 0.004)
-                using (var w = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(240, 245, 245, 248), infoAlpha)))
-                using (var d = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(170, 200, 200, 210), infoAlpha)))
-                {
-                    if (_title.Length > 0) g.DrawString(_title, _fontBig, w, 16, top + 6);
-                    string sub = _artist;
-                    if (_album.Length > 0) sub += (sub.Length > 0 ? "  ·  " : "") + _album;
-                    if (sub.Length > 0) g.DrawString(sub, _fontMid, d, 18, top + 44);
-                }
-
-            if (alpha <= 0.004) return;
-
-            double mLufs, sLufs, tp, crest;
-            lock (_gate)
-            {
-                mLufs = _meter.MomentaryLufs; sLufs = _meter.ShortTermLufs;
-                tp = _meter.TruePeakDb; crest = _meter.CrestDb;
-            }
-
-            using (var lbl = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(150, 190, 190, 200), alpha)))
-            using (var val = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(240, 245, 245, 248), alpha)))
-            using (var warn = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(255, 255, 120, 90), alpha)))
-            {
-                string[] names = { "LUFS-M", "LUFS-S", "TRUE PK", "CREST" };
-                string[] vals = { mLufs.ToString("0.0"), sLufs.ToString("0.0"),
-                                  tp.ToString("0.0"), crest.ToString("0.0") };
-                int x = ClientSize.Width - 16;
-                for (int i = names.Length - 1; i >= 0; i--)
-                {
-                    SizeF vs = g.MeasureString(vals[i], _fontMid);
-                    SizeF ls = g.MeasureString(names[i], _fontTiny);
-                    float colW = Math.Max(vs.Width, ls.Width) + 18;
-                    x -= (int)colW;
-                    g.DrawString(names[i], _fontTiny, lbl, x, top + 8);
-                    g.DrawString(vals[i], _fontMid, (i == 2 && tp > -1.0) ? warn : val, x, top + 22);
-                }
-            }
-        }
-
-        private void DrawHint(Graphics g)
+        private void DrawHint(Graphics g, int chromeTop)
         {
             if (DateTime.UtcNow > _hintUntil) return;
             string text = (_settings.FsImmersive ? "IMMERSIVE   " : "") +
                           "Click a button to cycle it    Right-click for all options    " +
-                          "I immersive    H hide OSD    Esc exit    Space freeze    " +
+                          "I immersive    O deck    H hide OSD    Esc exit    Space freeze    " +
                           _scope.Analyzer.DescribeResolution() + "    " +
                           _fps.ToString("0") + " fps  " + _analysisMs.ToString("0.0") + " ms dsp  " +
                           _paintMs.ToString("0.0") + " ms paint";
             SizeF sz = g.MeasureString(text, _fontSmall);
             float x = (ClientSize.Width - sz.Width) / 2;
-            float y = 92;
+            // Just under the scale strip. It used to clear an overlay bar that is gone.
+            float y = chromeTop + 12;
             using (var back = new SolidBrush(Color.FromArgb(200, 8, 8, 10)))
                 g.FillRectangle(back, x - 12, y - 6, sz.Width + 24, sz.Height + 12);
             using (var b = new SolidBrush(Color.FromArgb(225, 235, 235, 240)))
@@ -816,8 +768,8 @@ namespace NostalgiaPlus.Ui
                     _settings.FsShowWaveform = !_settings.FsShowWaveform;
                     OnSettingsChanged(true); return true;
                 case Keys.O:
-                    _settings.FsShowOverlays = !_settings.FsShowOverlays;
-                    OnSettingsChanged(false); return true;
+                    _settings.ShowCenterDeck = !_settings.ShowCenterDeck;
+                    OnSettingsChanged(true); return true;
                 case Keys.G:
                     _settings.ShowGrid = !_settings.ShowGrid;
                     OnSettingsChanged(false); return true;

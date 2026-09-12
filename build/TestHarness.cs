@@ -4,6 +4,7 @@ using System.Drawing;
 using System.Reflection;
 using NostalgiaPlus;
 using NostalgiaPlus.Dsp;
+using NostalgiaPlus.Render;
 using NostalgiaPlus.Ui;
 
 class TestHarness
@@ -372,11 +373,45 @@ class TestHarness
         var wide = new Settings();
         deck.Layout(new Rectangle(0, 0, 700, 110), wide);
         Check("a wide gap fits everything",
-              deck.ArtRect.Width > 0 && deck.GoniometerRect.Width > 0 && deck.StackRect.Width > 0, "");
+              deck.ArtRect.Width > 0 && deck.InfoRect.Width > 0 && deck.GoniometerRect.Width > 0
+              && deck.StackRect.Width > 0 && deck.LoudnessRect.Width > 0, "");
+        Check("the blocks do not overlap",
+              deck.ArtRect.Right <= deck.InfoRect.Left
+              && deck.InfoRect.Right <= deck.GoniometerRect.Left
+              && deck.GoniometerRect.Right <= deck.StackRect.Left
+              && deck.StackRect.Right <= deck.LoudnessRect.Left, "");
 
-        deck.Layout(new Rectangle(0, 0, 260, 110), wide);
+        // Each readout has its own switch, so turning one off has to give its width back
+        // rather than leave a hole where it used to be.
+        var picky = new Settings();
+        picky.DeckShowTrackInfo = false;
+        picky.DeckShowLufsM = picky.DeckShowLufsS = false;
+        picky.DeckShowTruePeak = picky.DeckShowCrest = false;
+        deck.Layout(new Rectangle(0, 0, 700, 110), picky);
+        Check("switched-off readouts take no room",
+              deck.InfoRect.Width == 0 && deck.LoudnessRect.Width == 0
+              && deck.GoniometerRect.Width > 0, "");
+
+        // Two rows deep, so halving the readouts halves the columns rather than the rows.
+        picky.DeckShowLufsM = picky.DeckShowTruePeak = true;
+        deck.Layout(new Rectangle(0, 0, 700, 110), picky);
+        int twoWide = deck.LoudnessRect.Width;
+        deck.Layout(new Rectangle(0, 0, 700, 110), wide);
+        Check("the loudness grid stacks two to a column",
+              twoWide > 0 && twoWide * 2 == deck.LoudnessRect.Width,
+              twoWide + "px for two, " + deck.LoudnessRect.Width + "px for four");
+
+        deck.Layout(new Rectangle(0, 0, 420, 110), wide);
         Check("a narrow gap drops the artwork first",
               deck.ArtRect.Width == 0 && deck.GoniometerRect.Width > 0 && deck.StackRect.Width > 0,
+              "gonio " + deck.GoniometerRect.Width + "px");
+        Check("and the numbers before the title",
+              deck.LoudnessRect.Width == 0 && deck.InfoRect.Width > 0,
+              "title " + deck.InfoRect.Width + "px");
+
+        deck.Layout(new Rectangle(0, 0, 260, 110), wide);
+        Check("narrower still and the title goes too",
+              deck.InfoRect.Width == 0 && deck.GoniometerRect.Width > 0 && deck.StackRect.Width > 0,
               "gonio " + deck.GoniometerRect.Width + "px");
 
         deck.Layout(new Rectangle(0, 0, 120, 110), wide);
@@ -386,6 +421,47 @@ class TestHarness
         deck.Layout(new Rectangle(0, 0, 20, 110), wide);
         Check("no room at all leaves nothing placed",
               deck.GoniometerRect.Width == 0 && deck.StackRect.Width == 0, "");
+
+        TestOuterLabelColumns();
+    }
+
+    /// <summary>
+    /// The repeated frequency labels at the far left and right sit in reserved columns.
+    /// Those columns used to be bare window background, so a bright spectrogram edge or
+    /// the immersive backdrop ran straight up against the numbers. They now stand on the
+    /// panel colour, like the centre gutter has all along - which is only visible if the
+    /// fill actually happens, hence a pixel probe rather than a geometry check.
+    /// </summary>
+    static void TestOuterLabelColumns()
+    {
+        var s = new Settings();
+        s.ShowOuterLabels = true;
+        s.ShowAxisLabels = true;
+        s.ShowGrid = true;
+        // Nothing like the panel colour, so "painted" and "not painted" cannot be confused.
+        s.ColBackground = Color.FromArgb(255, 40, 0, 60);
+
+        var scope = new StereoScope();
+        scope.SetPalette(Palette.BuildLut(s.Palette));
+        scope.Layout(new Rectangle(0, 0, 1200, 600), s, 48000);
+        Check("the outer label columns are reserved", scope.OuterLeftRect.Width > 0,
+              scope.OuterLeftRect.Width + "px each side");
+        if (scope.OuterLeftRect.Width <= 0) { scope.Dispose(); return; }
+
+        using (var bmp = new Bitmap(1200, 600))
+        using (var g = Graphics.FromImage(bmp))
+        using (var font = new Font("Segoe UI", 8f))
+        {
+            g.Clear(s.ColBackground);
+            scope.DrawGrid(g, s, font, 1.0, 0);
+            Color left = bmp.GetPixel(2, 400);
+            Color right = bmp.GetPixel(1197, 400);
+            Check("and are painted, not left on the window background",
+                  left.ToArgb() != s.ColBackground.ToArgb()
+                  && right.ToArgb() != s.ColBackground.ToArgb(),
+                  left + " / " + right);
+        }
+        scope.Dispose();
     }
 
     /// <summary>

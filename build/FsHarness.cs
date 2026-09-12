@@ -118,7 +118,10 @@ class FsHarness
         if (Flag("noglow")) s.FsGlow = false;
         if (Flag("nowave")) s.FsShowWaveform = false;
         if (Flag("nogrid")) s.ShowGrid = false;
-        if (Flag("nooverlay")) s.FsShowOverlays = false;
+        if (Flag("nodeck")) s.ShowCenterDeck = false;
+        // The deck only gets the gap the two graph strips leave, so a wide setting is
+        // the only way to see all of it at once.
+        if (Flag("widegraph")) s.CurveWidthPct = 45;
         if (Flag("nohover")) s.ShowHud = false;
         if (Flag("notrace")) { s.ShowMax = false; s.ShowMin = false; s.ShowAvg = false; }
     }

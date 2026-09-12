@@ -141,9 +141,19 @@ namespace NostalgiaPlus
         /// </summary>
         public bool ShowCenterDeck = true;
         public bool DeckShowGoniometer = true;
-        public bool DeckShowMeters = true;
         public bool DeckShowTransport = true;
         public bool DeckShowArtwork = true;
+        /// <summary>Title, artist and album. Used to be the top-left overlay.</summary>
+        public bool DeckShowTrackInfo = true;
+        // One switch per readout rather than one for the block. Which numbers are worth
+        // the width is a per-listener question: someone watching for clipping wants true
+        // peak and nothing else, someone matching levels wants the two LUFS figures.
+        public bool DeckShowCorrelation = true;
+        public bool DeckShowBalance = true;
+        public bool DeckShowLufsM = true;
+        public bool DeckShowLufsS = true;
+        public bool DeckShowTruePeak = true;
+        public bool DeckShowCrest = true;
         /// <summary>Split the quick bar around the centre gutter so the axis runs unbroken.</summary>
         public bool QuickBarSplit = true;
         public int BarSize = 6;
@@ -164,7 +174,6 @@ namespace NostalgiaPlus
         /// <summary>Centre label gutter. Shared: both views lay panes out identically.</summary>
         public int GutterWidth = 34;
         public bool FsShowWaveform = true;
-        public bool FsShowOverlays = true;
         /// <summary>Glow and auto-hiding furniture, for watching rather than measuring.</summary>
         public bool FsImmersive = false;
         public bool FsGlow = true;
@@ -323,7 +332,6 @@ namespace NostalgiaPlus
                     FsGlow = true;
                     FsAutoHide = true;
                     FsShowWaveform = true;
-                    FsShowOverlays = true;
                     break;
 
                 case Preset.Vocal:
@@ -675,12 +683,20 @@ namespace NostalgiaPlus
                 s.ShowScaleUnits = ParseBool(map, "ShowScaleUnits", s.ShowScaleUnits);
                 s.ShowCenterDeck = ParseBool(map, "ShowCenterDeck", s.ShowCenterDeck);
                 s.DeckShowGoniometer = ParseBool(map, "DeckShowGoniometer", s.DeckShowGoniometer);
-                s.DeckShowMeters = ParseBool(map, "DeckShowMeters", s.DeckShowMeters);
                 s.DeckShowTransport = ParseBool(map, "DeckShowTransport", s.DeckShowTransport);
                 s.DeckShowArtwork = ParseBool(map, "DeckShowArtwork", s.DeckShowArtwork);
+                s.DeckShowTrackInfo = ParseBool(map, "DeckShowTrackInfo", s.DeckShowTrackInfo);
+                // DeckShowMeters used to cover both; an older file's value still sets the
+                // pair, so switching them off does not quietly come back on after upgrade.
+                bool bothMeters = ParseBool(map, "DeckShowMeters", true);
+                s.DeckShowCorrelation = ParseBool(map, "DeckShowCorrelation", bothMeters);
+                s.DeckShowBalance = ParseBool(map, "DeckShowBalance", bothMeters);
+                s.DeckShowLufsM = ParseBool(map, "DeckShowLufsM", s.DeckShowLufsM);
+                s.DeckShowLufsS = ParseBool(map, "DeckShowLufsS", s.DeckShowLufsS);
+                s.DeckShowTruePeak = ParseBool(map, "DeckShowTruePeak", s.DeckShowTruePeak);
+                s.DeckShowCrest = ParseBool(map, "DeckShowCrest", s.DeckShowCrest);
                 s.QuickBarSplit = ParseBool(map, "QuickBarSplit", s.QuickBarSplit);
                 s.FsShowWaveform = ParseBool(map, "FsShowWaveform", s.FsShowWaveform);
-                s.FsShowOverlays = ParseBool(map, "FsShowOverlays", s.FsShowOverlays);
                 s.FsImmersive = ParseBool(map, "FsImmersive", s.FsImmersive);
                 s.FsGlow = ParseBool(map, "FsGlow", s.FsGlow);
                 s.FsAutoHide = ParseBool(map, "FsAutoHide", s.FsAutoHide);
@@ -768,12 +784,17 @@ namespace NostalgiaPlus
                 sb.AppendLine("ShowScaleUnits=" + ShowScaleUnits);
                 sb.AppendLine("ShowCenterDeck=" + ShowCenterDeck);
                 sb.AppendLine("DeckShowGoniometer=" + DeckShowGoniometer);
-                sb.AppendLine("DeckShowMeters=" + DeckShowMeters);
                 sb.AppendLine("DeckShowTransport=" + DeckShowTransport);
                 sb.AppendLine("DeckShowArtwork=" + DeckShowArtwork);
+                sb.AppendLine("DeckShowTrackInfo=" + DeckShowTrackInfo);
+                sb.AppendLine("DeckShowCorrelation=" + DeckShowCorrelation);
+                sb.AppendLine("DeckShowBalance=" + DeckShowBalance);
+                sb.AppendLine("DeckShowLufsM=" + DeckShowLufsM);
+                sb.AppendLine("DeckShowLufsS=" + DeckShowLufsS);
+                sb.AppendLine("DeckShowTruePeak=" + DeckShowTruePeak);
+                sb.AppendLine("DeckShowCrest=" + DeckShowCrest);
                 sb.AppendLine("QuickBarSplit=" + QuickBarSplit);
                 sb.AppendLine("FsShowWaveform=" + FsShowWaveform);
-                sb.AppendLine("FsShowOverlays=" + FsShowOverlays);
                 sb.AppendLine("FsImmersive=" + FsImmersive);
                 sb.AppendLine("FsGlow=" + FsGlow);
                 sb.AppendLine("FsAutoHide=" + FsAutoHide);

@@ -14,28 +14,53 @@ namespace NostalgiaPlus.Ui
     /// makes it the right home for everything that describes the pair rather than one
     /// side of it: the goniometer, correlation and balance, and the transport.
     ///
-    /// Laid out left to right as artwork, goniometer, transport, meters. Whatever does
-    /// not fit is dropped, least important first, and what remains is centred - the gap
-    /// changes width with the graph size setting, so it cannot be assumed roomy.
+    /// Laid out left to right as artwork, track info, goniometer, transport, loudness.
+    /// Whatever does not fit is dropped, least important first, and what remains is
+    /// centred - the gap changes width with the graph size setting, so it cannot be
+    /// assumed roomy.
+    ///
+    /// The track title and the loudness readouts used to float in the top corners of the
+    /// screen, on a gradient bar painted straight over the top of both spectrograms -
+    /// which also pushed the outer frequency labels 84px down the axis to stay clear of
+    /// it. Here they cost the image nothing at all.
     /// </summary>
     public sealed class CenterDeck
     {
-        private Rectangle _art, _gonio, _stack;
+        private Rectangle _art, _info, _gonio, _stack, _loud;
         private Rectangle _prev, _play, _next, _seek, _clock, _corr, _bal;
+        private int _loudCols, _loudColW;
         private Bitmap _artwork;
         private string _artworkKey;
 
         public Rectangle Bounds { get; private set; }
         /// <summary>Placed slots; empty when that element did not fit or is switched off.</summary>
         public Rectangle ArtRect { get { return _art; } }
+        public Rectangle InfoRect { get { return _info; } }
         public Rectangle GoniometerRect { get { return _gonio; } }
         public Rectangle StackRect { get { return _stack; } }
+        public Rectangle LoudnessRect { get { return _loud; } }
+
+        /// <summary>What is playing. Set by the view when the host reports a track change.</summary>
+        public string Title = "", Artist = "", Album = "";
 
         // The gap is only as wide as the two graph strips plus the gutter, which at a
         // 12% graph is around 260px - so the deck stacks vertically rather than laying
         // everything out in a row, and uses the band's full height instead of asking
         // for width it will not get.
         private const int MinStack = 150;
+        /// <summary>
+        /// Enough for a short title at the label font. Below this the block is all
+        /// ellipsis and tells you nothing, so it is dropped instead.
+        /// </summary>
+        private const int InfoMin = 120;
+        /// <summary>Past this a title is simply long, and the width is better spent elsewhere.</summary>
+        private const int InfoWant = 300;
+        /// <summary>
+        /// One loudness readout column: a caption over a signed number, at the smallest
+        /// label font. "LUFS-M" is the wide part and it scales with the setting, so a
+        /// fixed column would have the two columns overlapping at large text.
+        /// </summary>
+        private const int LoudCol = 66;
         /// <summary>
         /// Past this the transport gains nothing: the seek bar is already long enough
         /// to aim at, and letting it stretch put the clock half a screen from the
@@ -54,61 +79,109 @@ namespace NostalgiaPlus.Ui
         public void Layout(Rectangle gap, Settings s)
         {
             Bounds = gap;
-            _art = _gonio = _stack = Rectangle.Empty;
+            _art = _info = _gonio = _stack = _loud = Rectangle.Empty;
             _prev = _play = _next = _seek = _clock = _corr = _bal = Rectangle.Empty;
+            _loudCols = _loudColW = 0;
             if (gap.Width <= 40 || gap.Height <= 24) return;
 
             int h = gap.Height - Pad * 2;
-            int square = Math.Min(h, gap.Width / 3);
+            // A quarter rather than a third: there are two squares here now, and they
+            // were eating width the title had no way to get back.
+            int square = Math.Min(h, gap.Width / 4);
 
             bool art = s.DeckShowArtwork;
+            bool info = s.DeckShowTrackInfo;
             bool gonio = s.DeckShowGoniometer;
             bool player = s.DeckShowTransport;
-            bool meters = s.DeckShowMeters;
+            bool corr = s.DeckShowCorrelation;
+            bool bal = s.DeckShowBalance;
+            int loud = LoudCount(s);
+            int loudCol = LoudCol + (int)Math.Max(0, (s.LabelFontSize - 7f) * 5);
+            // Two rows deep, so four readouts cost two columns rather than four. The
+            // deck is short of width and long on height; this spends the one it has.
+            int cols = (loud + 1) / 2;
 
-            // Dropped least important first. The goniometer goes last: it is the one
+            // Dropped least important first, and only in an order that actually frees
+            // width. The transport and the two meters share one column, so giving up
+            // either while the other is there costs a readout and buys nothing - they
+            // go together, and last. The goniometer is never dropped: it is the one
             // instrument here, and the only thing that shows the stereo field at all.
-            int need = Need(art, gonio, player || meters, square);
-            if (need > gap.Width && art) { art = false; need = Need(art, gonio, player || meters, square); }
-            if (need > gap.Width && meters) { meters = false; need = Need(art, gonio, player, square); }
-            if (need > gap.Width && player) { player = false; need = Need(art, gonio, false, square); }
+            bool stack = player || corr || bal;
+            int need = Need(art, info, gonio, stack, cols * loudCol, square);
+            if (need > gap.Width && art)
+            { art = false; need = Need(art, info, gonio, stack, cols * loudCol, square); }
+            if (need > gap.Width && cols > 0)
+            { cols = 0; need = Need(art, info, gonio, stack, 0, square); }
+            if (need > gap.Width && info)
+            { info = false; need = Need(art, info, gonio, stack, cols * loudCol, square); }
+            if (need > gap.Width && stack)
+            { player = corr = bal = stack = false; need = Need(art, info, gonio, false, cols * loudCol, square); }
             if (need > gap.Width) return;
 
-            bool stack = player || meters;
             int slack = gap.Width - need;
+
+            // The title is the only thing here that loses characters when it is short of
+            // room, so it has first claim on the slack; the stack at its minimum is
+            // already a usable transport.
+            int infoW = 0;
+            if (info)
+            {
+                infoW = InfoMin + Math.Min(Math.Max(0, slack), InfoWant - InfoMin);
+                slack -= infoW - InfoMin;
+            }
             int stackW = stack ? Math.Min(MaxStack, MinStack + Math.Max(0, slack)) : 0;
-            // Whatever the stack declines to take is spread either side, so the deck
-            // stays centred in the gap rather than hugging its left edge.
-            int used = need - (stack ? MinStack : 0) + stackW;
+
+            // Whatever the stack and the title decline to take is spread either side, so
+            // the deck stays centred in the gap rather than hugging its left edge.
+            int used = need + (info ? infoW - InfoMin : 0) + (stack ? stackW - MinStack : 0);
             int x = gap.X + Pad + Math.Max(0, (gap.Width - used) / 2);
             int y = gap.Y + Pad;
 
             if (art) { _art = new Rectangle(x, y, square, h); x += square + Pad; }
+            if (info) { _info = new Rectangle(x, y, infoW, h); x += infoW + Pad; }
             if (gonio) { _gonio = new Rectangle(x, y, square, h); x += square + Pad; }
             if (stack)
             {
                 _stack = new Rectangle(x, y, stackW, h);
-                LayoutStack(player, meters);
+                LayoutStack(player, corr, bal);
+                x += stackW + Pad;
+            }
+            if (cols > 0)
+            {
+                _loudCols = cols;
+                _loudColW = loudCol;
+                _loud = new Rectangle(x, y, cols * loudCol, h);
             }
         }
 
-        private static int Need(bool art, bool gonio, bool stack, int square)
+        /// <summary>How many of the four loudness readouts are switched on.</summary>
+        private static int LoudCount(Settings s)
+        {
+            return (s.DeckShowLufsM ? 1 : 0) + (s.DeckShowLufsS ? 1 : 0)
+                 + (s.DeckShowTruePeak ? 1 : 0) + (s.DeckShowCrest ? 1 : 0);
+        }
+
+        private static int Need(bool art, bool info, bool gonio, bool stack, int loudW, int square)
         {
             int n = 0, w = 0;
             if (art) { w += square; n++; }
+            if (info) { w += InfoMin; n++; }
             if (gonio) { w += square; n++; }
             if (stack) { w += MinStack; n++; }
+            if (loudW > 0) { w += loudW; n++; }
             return w + Pad * (n + 1);
         }
 
         /// <summary>
-        /// The right-hand column: transport, seek bar, then the two correlation meters,
-        /// each taking a share of the height rather than competing for width.
+        /// The transport column: buttons and clock, seek bar, then whichever of the two
+        /// correlation meters are switched on, each taking a share of the height rather
+        /// than competing for width.
         /// </summary>
-        private void LayoutStack(bool player, bool meters)
+        private void LayoutStack(bool player, bool corr, bool bal)
         {
             int h = _stack.Height;
-            int rows = (player ? 2 : 0) + (meters ? 2 : 0);
+            int meters = (corr ? 1 : 0) + (bal ? 1 : 0);
+            int rows = (player ? 2 : 0) + meters;
             if (rows == 0) return;
 
             // The seek bar and the meter bars are thin; the transport row wants to be
@@ -126,26 +199,127 @@ namespace NostalgiaPlus.Ui
                 _seek = new Rectangle(_stack.X, y, _stack.Width, seekH);
                 y += seekH + 6;
             }
-            if (meters)
+            if (meters > 0)
             {
                 int left = Math.Max(10, _stack.Bottom - y);
-                int rowH = left / 2;
-                _corr = new Rectangle(_stack.X, y, _stack.Width, rowH);
-                _bal = new Rectangle(_stack.X, y + rowH, _stack.Width, rowH);
+                int rowH = left / meters;
+                if (corr) { _corr = new Rectangle(_stack.X, y, _stack.Width, rowH); y += rowH; }
+                if (bal) _bal = new Rectangle(_stack.X, y, _stack.Width, rowH);
             }
         }
 
         // ---------------- drawing ----------------
 
-        public void Draw(Graphics g, Settings s, Font font, double alpha, int[] lut,
-                         LoudnessMeter meter, PlayerBridge player,
+        /// <param name="infoAlpha">
+        /// Track info only. A track change announces itself at full strength even when
+        /// the rest of the furniture has faded out, which is what the old top-left
+        /// overlay did and the one part of it worth keeping.
+        /// </param>
+        public void Draw(Graphics g, Settings s, Font font, Font mid, double alpha,
+                         double infoAlpha, int[] lut, LoudnessMeter meter, PlayerBridge player,
                          float[] gonL, float[] gonR, int gonCount)
         {
-            if (Bounds.Width <= 0 || alpha <= 0.004) return;
+            if (Bounds.Width <= 0) return;
+            if (alpha <= 0.004)
+            {
+                // Everything else is chrome and stays gone; the announcement is not.
+                if (infoAlpha > 0.004 && _info.Width > 0) DrawTrackInfo(g, font, mid, infoAlpha);
+                return;
+            }
             if (_art.Width > 0) DrawArtwork(g, alpha, player);
+            if (_info.Width > 0) DrawTrackInfo(g, font, mid, Math.Max(alpha, infoAlpha));
             if (_gonio.Width > 0) DrawGoniometer(g, alpha, lut, gonL, gonR, gonCount, font);
             if (_seek.Width > 0) DrawPlayer(g, font, alpha, player);
-            if (_corr.Width > 0) DrawMeters(g, font, alpha, meter);
+            if (_corr.Width > 0 || _bal.Width > 0) DrawMeters(g, font, alpha, meter);
+            if (_loud.Width > 0) DrawLoudness(g, s, font, mid, alpha, meter);
+        }
+
+        /// <summary>
+        /// Title over artist and album, clipped to the slot. Left-aligned against the
+        /// artwork so the two read as one block.
+        /// </summary>
+        private void DrawTrackInfo(Graphics g, Font font, Font mid, double alpha)
+        {
+            string title = Title ?? "";
+            string sub = Artist ?? "";
+            if (!string.IsNullOrEmpty(Album)) sub += (sub.Length > 0 ? "  ·  " : "") + Album;
+            if (title.Length == 0 && sub.Length == 0) return;
+
+            float titleH = title.Length > 0 ? g.MeasureString("Mg", mid).Height : 0;
+            float subH = sub.Length > 0 ? g.MeasureString("Mg", font).Height : 0;
+            float y = _info.Y + (_info.Height - (titleH + subH)) / 2f;
+
+            using (var ink = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(240, 245, 245, 248), alpha)))
+            using (var dim = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(170, 200, 200, 210), alpha)))
+            {
+                if (title.Length > 0)
+                {
+                    g.DrawString(Fit(g, title, mid, _info.Width), mid, ink, _info.X, y);
+                    y += titleH;
+                }
+                if (sub.Length > 0)
+                    g.DrawString(Fit(g, sub, font, _info.Width), font, dim, _info.X, y);
+            }
+        }
+
+        /// <summary>
+        /// Trims to fit rather than spilling into the next block. Binary search because
+        /// MeasureString is the expensive call here and this runs every frame.
+        /// </summary>
+        private static string Fit(Graphics g, string text, Font font, float maxWidth)
+        {
+            if (string.IsNullOrEmpty(text)) return "";
+            if (g.MeasureString(text, font).Width <= maxWidth) return text;
+            int lo = 0, hi = text.Length;
+            while (lo < hi)
+            {
+                int n = (lo + hi + 1) / 2;
+                if (g.MeasureString(text.Substring(0, n) + "...", font).Width <= maxWidth) lo = n;
+                else hi = n - 1;
+            }
+            return lo <= 0 ? "" : text.Substring(0, lo).TrimEnd() + "...";
+        }
+
+        /// <summary>
+        /// The loudness readouts, two rows deep. Kept in the order they are read in -
+        /// the two LUFS figures in one column, peak and crest in the next.
+        /// </summary>
+        private void DrawLoudness(Graphics g, Settings s, Font font, Font mid,
+                                  double alpha, LoudnessMeter meter)
+        {
+            if (meter == null || _loudCols <= 0) return;
+            double tp = meter.TruePeakDb;
+
+            using (var lbl = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(150, 190, 190, 200), alpha)))
+            using (var val = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(240, 245, 245, 248), alpha)))
+            using (var warn = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(255, 255, 120, 90), alpha)))
+            {
+                int i = 0;
+                if (s.DeckShowLufsM) Cell(g, font, mid, lbl, val, i++, "LUFS-M", meter.MomentaryLufs);
+                if (s.DeckShowLufsS) Cell(g, font, mid, lbl, val, i++, "LUFS-S", meter.ShortTermLufs);
+                // Anything above -1 dBTP will clip a lossy encoder even though the sample
+                // peaks never did, which is the whole reason true peak is measured.
+                if (s.DeckShowTruePeak) Cell(g, font, mid, lbl, tp > -1.0 ? warn : val, i++, "TRUE PK", tp);
+                if (s.DeckShowCrest) Cell(g, font, mid, lbl, val, i++, "CREST", meter.CrestDb);
+            }
+        }
+
+        /// <summary>One readout: caption over value, filling column-major down each pair.</summary>
+        private void Cell(Graphics g, Font font, Font mid, Brush lbl, Brush val,
+                          int index, string name, double value)
+        {
+            int col = index / 2, row = index % 2;
+            if (col >= _loudCols) return;
+            int cellH = _loud.Height / 2;
+            int x = _loud.X + col * _loudColW;
+            int y = _loud.Y + row * cellH;
+
+            SizeF ls = g.MeasureString(name, font);
+            SizeF vs = g.MeasureString("-00.0", mid);
+            float block = ls.Height + vs.Height;
+            float top = y + Math.Max(0, (cellH - block) / 2f);
+            g.DrawString(name, font, lbl, x, top);
+            g.DrawString(value.ToString("0.0"), mid, val, x, top + ls.Height);
         }
 
         private void DrawArtwork(Graphics g, double alpha, PlayerBridge player)
@@ -353,6 +527,7 @@ namespace NostalgiaPlus.Ui
         private void DrawMeters(Graphics g, Font font, double alpha, LoudnessMeter meter)
         {
             if (meter == null) return;
+            // Either rect may be empty - each meter has its own switch.
             double corr = meter.Correlation, bal = meter.Balance;
             DrawBipolar(g, font, alpha, _corr, "CORR", corr,
                         corr < 0 ? Color.FromArgb(255, 120, 90) : Color.FromArgb(120, 220, 160));
