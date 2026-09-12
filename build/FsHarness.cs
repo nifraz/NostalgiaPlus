@@ -14,9 +14,11 @@ class FsHarness
     const double Sr = 48000;
     const int Fps = 60;
 
+    // {title, artist, album, composer, year} - the order the deck reads.
     static string[] Info()
     {
-        return new string[] { "Maanaadu Theme", "Yuvan Shankar Raja", "Maanaadu (2021)" };
+        return new string[] { "Sevvaanam Chinna Paiyyan", "Mano, Pallavi",
+                              "Pavithra", "Ilaiyaraaja", "1994" };
     }
 
     // Stands in for MusicBee so the deck's transport, clock and seek bar can be seen

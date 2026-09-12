@@ -308,19 +308,99 @@ namespace MusicBeePlugin
             return b;
         }
 
-        /// <summary>Track metadata for the fullscreen overlay.</summary>
+        /// <summary>
+        /// Tag id for the composer, or -1 when it could not be established. Found once,
+        /// by name, because it is not one of the ids recovered from the host.
+        /// </summary>
+        private int _composerId = -2;      // -2 = not looked for yet
+
+        /// <summary>
+        /// Track metadata for the centre deck, in the order
+        /// {title, artist, album, composer, year}. Any element may be null.
+        /// </summary>
         private string[] GetNowPlaying()
         {
             try
             {
                 if (_mb.NowPlaying_GetFileTag == null) return null;
+                if (_composerId == -2) _composerId = DiscoverTagId("composer");
+
+                // YearOnly is the four digits; Year can carry a full date, and a deck
+                // line reading "1994-03-17" is a date stamp, not a year.
+                string year = _mb.NowPlaying_GetFileTag(MetaDataType.YearOnly);
+                if (string.IsNullOrEmpty(year))
+                    year = Digits4(_mb.NowPlaying_GetFileTag(MetaDataType.Year));
+
                 return new string[] {
                     _mb.NowPlaying_GetFileTag(MetaDataType.TrackTitle),
                     _mb.NowPlaying_GetFileTag(MetaDataType.Artist),
-                    _mb.NowPlaying_GetFileTag(MetaDataType.Album)
+                    _mb.NowPlaying_GetFileTag(MetaDataType.Album),
+                    _composerId >= 0 ? _mb.NowPlaying_GetFileTag((MetaDataType)_composerId) : null,
+                    year
                 };
             }
             catch { return null; }
+        }
+
+        /// <summary>First four consecutive digits, so a full date still yields a year.</summary>
+        private static string Digits4(string text)
+        {
+            if (string.IsNullOrEmpty(text)) return null;
+            int run = 0;
+            for (int i = 0; i < text.Length; i++)
+            {
+                if (text[i] >= '0' && text[i] <= '9')
+                {
+                    if (++run == 4) return text.Substring(i - 3, 4);
+                }
+                else run = 0;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Finds a tag id by asking the host what each one is called.
+        ///
+        /// The alternative is to hard-code a number, and a wrong number does not fail -
+        /// it returns whichever tag really has that id. Comment, conductor and grouping
+        /// all live in the same range as composer, so the failure would be a plausible
+        /// looking string under the wrong caption. Asking costs one pass at startup and
+        /// survives the host renumbering anything.
+        ///
+        /// Returns -1 if the host cannot answer, which leaves that line off the deck -
+        /// the honest outcome, rather than a confident wrong one.
+        /// </summary>
+        private int DiscoverTagId(string wanted)
+        {
+            if (_mb.Setting_GetFieldName == null) return -1;
+            try
+            {
+                // Sanity first: if the call does not name an id we already know, it is
+                // not doing what we think and nothing it says can be trusted.
+                string known = _mb.Setting_GetFieldName(MetaDataType.TrackTitle);
+                if (string.IsNullOrEmpty(known) ||
+                    known.IndexOf("title", StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    Trace("field names unavailable (title reported as '" + known + "')");
+                    return -1;
+                }
+
+                for (int id = 0; id <= 200; id++)
+                {
+                    string name;
+                    try { name = _mb.Setting_GetFieldName((MetaDataType)id); }
+                    catch { continue; }
+                    if (string.IsNullOrEmpty(name)) continue;
+                    if (string.Equals(name, wanted, StringComparison.OrdinalIgnoreCase))
+                    {
+                        Trace(wanted + " is tag id " + id);
+                        return id;
+                    }
+                }
+                Trace("no tag named " + wanted);
+            }
+            catch (Exception e) { Trace("tag lookup failed: " + e.Message); }
+            return -1;
         }
 
         private void Trace(string message)

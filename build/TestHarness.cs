@@ -470,7 +470,9 @@ class TestHarness
 
         var deck = new CenterDeck();
         var wide = new Settings();
-        deck.Layout(new Rectangle(0, 0, 900, 110), wide);
+        // Wide enough that nothing has to be shed: five readout columns and a usable
+        // transport block have to fit in the right half, which is about 0.4 of the gap.
+        deck.Layout(new Rectangle(0, 0, 1200, 130), wide);
         Check("a wide gap fits everything",
               deck.ArtRect.Width > 0 && deck.InfoRect.Width > 0 && deck.GoniometerRect.Width > 0
               && deck.StackRect.Width > 0 && deck.LoudnessRect.Width > 0, "");
@@ -479,6 +481,31 @@ class TestHarness
               && deck.InfoRect.Right <= deck.GoniometerRect.Left
               && deck.GoniometerRect.Right <= deck.StackRect.Left
               && deck.StackRect.Right <= deck.LoudnessRect.Left, "");
+
+        // The goniometer is the axis the display is mirrored about, so it sits on the
+        // deck's midpoint and the two halves come out equal.
+        int deckMid = 1200 / 2;
+        int gonMid = deck.GoniometerRect.Left + deck.GoniometerRect.Width / 2;
+        Check("the goniometer is centred", Math.Abs(gonMid - deckMid) <= 1,
+              "centre " + gonMid + ", deck centre " + deckMid);
+        int leftHalf = deck.GoniometerRect.Left;
+        int rightHalf = 1200 - deck.GoniometerRect.Right;
+        Check("and leaves equal halves", Math.Abs(leftHalf - rightHalf) <= 2,
+              leftHalf + "px left, " + rightHalf + "px right");
+
+        // All three bars in the player block share one column, which is what stops
+        // CORR being shorter than BAL because its caption is wider.
+        Check("the seek bar sits in the shared column",
+              deck.BarColumn.Width > 0
+              && deck.SeekRect.Left == deck.BarColumn.Left
+              && deck.SeekRect.Right == deck.BarColumn.Right,
+              "seek " + deck.SeekRect.Left + ".." + deck.SeekRect.Right
+              + ", column " + deck.BarColumn.Left + ".." + deck.BarColumn.Right);
+        Check("and the two meters are the same width and stacked",
+              deck.CorrelationRect.Width == deck.BalanceRect.Width
+              && deck.CorrelationRect.Bottom <= deck.BalanceRect.Top,
+              deck.CorrelationRect.Width + "px each");
+
         int allNine = deck.LoudnessRect.Width;
 
         // Each readout has its own switch, so turning one off has to give its width back
@@ -488,7 +515,7 @@ class TestHarness
         picky.DeckShowLufsM = picky.DeckShowLufsS = picky.DeckShowLufsI = false;
         picky.DeckShowLra = picky.DeckShowTruePeak = picky.DeckShowCrest = false;
         picky.DeckShowOvers = picky.DeckShowBpm = picky.DeckShowBrightness = false;
-        deck.Layout(new Rectangle(0, 0, 900, 110), picky);
+        deck.Layout(new Rectangle(0, 0, 1200, 130), picky);
         Check("switched-off readouts take no room",
               deck.InfoRect.Width == 0 && deck.LoudnessRect.Width == 0
               && deck.GoniometerRect.Width > 0, "");
@@ -496,39 +523,37 @@ class TestHarness
         // Two rows deep, so readouts cost columns rather than rows: two readouts are one
         // column, four are two, and all nine are five.
         picky.DeckShowLufsM = picky.DeckShowTruePeak = true;
-        deck.Layout(new Rectangle(0, 0, 900, 110), picky);
+        deck.Layout(new Rectangle(0, 0, 1200, 130), picky);
         int twoWide = deck.LoudnessRect.Width;
         picky.DeckShowLufsS = picky.DeckShowCrest = true;
-        deck.Layout(new Rectangle(0, 0, 900, 110), picky);
-        Check("the readout grid stacks two to a column",
-              twoWide > 0 && twoWide * 2 == deck.LoudnessRect.Width
-              && twoWide * 5 == allNine,
-              twoWide + "px for two, " + deck.LoudnessRect.Width + "px for four, "
-              + allNine + "px for nine");
+        deck.Layout(new Rectangle(0, 0, 1200, 130), picky);
+        Check("the readout grid fills columns before it adds them",
+              twoWide > 0 && twoWide * 2 == deck.LoudnessRect.Width,
+              twoWide + "px for two, " + deck.LoudnessRect.Width + "px for four");
+
+        // A tall deck takes three rows and so needs fewer columns for the same nine
+        // readouts - which is most of the difference between fitting beside the
+        // transport block and being shed.
+        deck.Layout(new Rectangle(0, 0, 1200, 84), wide);
+        int shortGrid = deck.LoudnessRect.Width;
+        Check("a taller deck spends height instead of width",
+              shortGrid > allNine, shortGrid + "px at 84px tall, "
+              + allNine + "px at 130px");
 
         // Columns are shed one at a time from the right, not all at once: at a width
-        // that cannot hold five the grid keeps as many as it can.
-        deck.Layout(new Rectangle(0, 0, 620, 110), wide);
+        // that cannot hold them all the grid keeps as many as it can.
+        deck.Layout(new Rectangle(0, 0, 700, 130), wide);
         Check("a tight gap sheds readout columns one at a time",
               deck.LoudnessRect.Width > 0 && deck.LoudnessRect.Width < allNine,
               deck.LoudnessRect.Width + "px of " + allNine + "px");
 
         deck.Layout(new Rectangle(0, 0, 420, 110), wide);
         Check("a narrow gap drops the artwork first",
-              deck.ArtRect.Width == 0 && deck.GoniometerRect.Width > 0 && deck.StackRect.Width > 0,
-              "gonio " + deck.GoniometerRect.Width + "px");
-        Check("and the numbers before the title",
-              deck.LoudnessRect.Width == 0 && deck.InfoRect.Width > 0,
-              "title " + deck.InfoRect.Width + "px");
+              deck.ArtRect.Width == 0 && deck.GoniometerRect.Width > 0, "");
 
-        deck.Layout(new Rectangle(0, 0, 260, 110), wide);
-        Check("narrower still and the title goes too",
-              deck.InfoRect.Width == 0 && deck.GoniometerRect.Width > 0 && deck.StackRect.Width > 0,
-              "gonio " + deck.GoniometerRect.Width + "px");
-
-        deck.Layout(new Rectangle(0, 0, 120, 110), wide);
-        Check("the goniometer is the last to go",
-              deck.GoniometerRect.Width > 0 && deck.StackRect.Width == 0, "");
+        deck.Layout(new Rectangle(0, 0, 240, 110), wide);
+        Check("narrower still and the metadata goes too",
+              deck.InfoRect.Width == 0 && deck.GoniometerRect.Width > 0, "");
 
         deck.Layout(new Rectangle(0, 0, 20, 110), wide);
         Check("no room at all leaves nothing placed",

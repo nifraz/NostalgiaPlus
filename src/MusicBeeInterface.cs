@@ -51,7 +51,15 @@ namespace MusicBeePlugin
     public enum ElementComponent { ComponentBorder = 0, ComponentBackground = 1, ComponentForeground = 3 }
     public enum PluginCloseReason { MusicBeeClosing = 1, UserDisabled = 2, StopNoUnload = 3 }
 
-    /// <summary>Subset of MusicBee's tag ids, recovered from the installed host.</summary>
+    /// <summary>
+    /// Subset of MusicBee's tag ids, recovered from the installed host.
+    ///
+    /// Only ids that were actually read off the host belong here. Guessing one is worse
+    /// than not having it: the host answers happily with whatever tag really carries
+    /// that number, so a wrong composer id shows the comment field under a composer
+    /// caption and nothing anywhere reports a failure. Ids not listed are discovered at
+    /// run time by name - see Plugin.DiscoverTagId.
+    /// </summary>
     public enum MetaDataType
     {
         Album = 30, AlbumArtist = 31, Artist = 32, YearOnly = 35,
@@ -79,6 +87,13 @@ namespace MusicBeePlugin
         public delegate string NowPlaying_GetFileUrl_D();
         public delegate int NowPlaying_GetDuration_D();
         public delegate string NowPlaying_GetFileTag_D(MetaDataType field);
+        /// <summary>
+        /// The display name of a tag field - "Composer", "Title", and so on. Same shape
+        /// as NowPlaying_GetFileTag, and the slot is sound: MB_AddPanel sits thirteen
+        /// entries further down the struct and demonstrably works, so the layout is
+        /// right through here.
+        /// </summary>
+        public delegate string Setting_GetFieldName_D(MetaDataType field);
         public delegate IntPtr MB_GetWindowHandle_D();
         public delegate void MB_RefreshPanels_D();
         public delegate void MB_RegisterCommand_D(string command, EventHandler handler);
@@ -155,7 +170,7 @@ namespace MusicBeePlugin
             public MB_RefreshPanels_D MB_RefreshPanels;
             public IntPtr MB_SendNotification;
             public IntPtr MB_AddMenuItem;
-            public IntPtr Setting_GetFieldName;
+            public Setting_GetFieldName_D Setting_GetFieldName;
             public IntPtr Library_QueryGetAllFiles;
             public IntPtr NowPlayingList_QueryGetAllFiles;
             public IntPtr Playlist_QueryGetAllFiles;

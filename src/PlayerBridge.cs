@@ -14,7 +14,10 @@ namespace NostalgiaPlus
     /// </summary>
     public sealed class PlayerBridge
     {
-        /// <summary>{title, artist, album}; any element may be null or empty.</summary>
+        /// <summary>
+        /// {title, artist, album, composer, year}; any element may be null or empty,
+        /// and a short array is fine - the deck reads what is there.
+        /// </summary>
         public NowPlayingProvider Info;
 
         /// <summary>Playback position in milliseconds.</summary>

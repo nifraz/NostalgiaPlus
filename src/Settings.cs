@@ -37,7 +37,10 @@ namespace NostalgiaPlus
     /// <summary>Which end of the panes the reserved scale strip sits at.</summary>
     public enum ScaleLanePosition { Top, Bottom }
 
-    /// <summary>Returns {title, artist, album}; any element may be null or empty.</summary>
+    /// <summary>
+    /// Returns {title, artist, album, composer, year}; any element may be null or
+    /// empty, and a shorter array is read as far as it goes.
+    /// </summary>
     public delegate string[] NowPlayingProvider();
 
     /// <summary>
@@ -146,6 +149,12 @@ namespace NostalgiaPlus
         /// describes both channels at once, which is why it belongs to neither pane.
         /// </summary>
         public bool ShowCenterDeck = true;
+        /// <summary>
+        /// How tall the deck asks the bottom band to be. The band takes the larger of
+        /// this and the waveform lanes, so a taller deck never shrinks them - it takes
+        /// its height off the image instead.
+        /// </summary>
+        public int DeckHeightPx = 120;
         public bool DeckShowGoniometer = true;
         public bool DeckShowTransport = true;
         public bool DeckShowArtwork = true;
@@ -701,6 +710,7 @@ namespace NostalgiaPlus
                 s.ScaleLanePos = ParseEnum(map, "ScaleLanePos", s.ScaleLanePos);
                 s.ShowScaleUnits = ParseBool(map, "ShowScaleUnits", s.ShowScaleUnits);
                 s.ShowCenterDeck = ParseBool(map, "ShowCenterDeck", s.ShowCenterDeck);
+                s.DeckHeightPx = (int)ParseDouble(map, "DeckHeightPx", s.DeckHeightPx);
                 s.DeckShowGoniometer = ParseBool(map, "DeckShowGoniometer", s.DeckShowGoniometer);
                 s.DeckShowTransport = ParseBool(map, "DeckShowTransport", s.DeckShowTransport);
                 s.DeckShowArtwork = ParseBool(map, "DeckShowArtwork", s.DeckShowArtwork);
@@ -808,6 +818,7 @@ namespace NostalgiaPlus
                 sb.AppendLine("ScaleLanePos=" + ScaleLanePos);
                 sb.AppendLine("ShowScaleUnits=" + ShowScaleUnits);
                 sb.AppendLine("ShowCenterDeck=" + ShowCenterDeck);
+                sb.AppendLine("DeckHeightPx=" + DeckHeightPx);
                 sb.AppendLine("DeckShowGoniometer=" + DeckShowGoniometer);
                 sb.AppendLine("DeckShowTransport=" + DeckShowTransport);
                 sb.AppendLine("DeckShowArtwork=" + DeckShowArtwork);

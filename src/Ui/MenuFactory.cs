@@ -1254,12 +1254,14 @@ namespace NostalgiaPlus.Ui
 
                 AddToggle(m.DropDownItems, "Centre deck  (O)",
                           "Fills the gap between the two waveform lanes - the one part of\n"
-                          + "the screen that belongs to neither channel - with everything\n"
-                          + "that describes both: what is playing, the goniometer,\n"
-                          + "correlation and balance, the transport, and the loudness\n"
-                          + "readouts. The title and the meters used to float in the top\n"
-                          + "corners, where they sat on the frequency axis and cost the\n"
-                          + "image the top of its range.",
+                          + "the screen that belongs to neither channel.\n"
+                          + "The goniometer sits on the middle of it, which is the middle\n"
+                          + "of the screen and the axis the whole display is mirrored\n"
+                          + "about. What is playing goes in the half to its left, what the\n"
+                          + "sound is doing in the half to its right.\n"
+                          + "The title and the meters used to float in the top corners,\n"
+                          + "where they sat on the frequency axis and cost the image the\n"
+                          + "top of its range.",
                           s.ShowCenterDeck,
                           delegate { s.ShowCenterDeck = !s.ShowCenterDeck; o.Changed(true); });
 
@@ -1270,9 +1272,15 @@ namespace NostalgiaPlus.Ui
                                                        + "The readouts are in priority order, so brightness and tempo go\n"
                                                        + "before the two LUFS figures do.");
                 AddToggle(deck.DropDownItems, "Track info",
-                          "Title, then artist and album. Trimmed with an ellipsis rather\n"
-                          + "than allowed to run into the goniometer beside it, so widen\n"
-                          + "the graph strips if long titles are being cut.\n"
+                          "Title, composer, artists, album and year, beside the artwork.\n"
+                          + "How many lines they get depends on the deck's height: four\n"
+                          + "labelled lines when there is room, two joined pairs when\n"
+                          + "there is not, and the title alone when there is barely any.\n"
+                          + "Composer appears only if MusicBee reports a field by that\n"
+                          + "name - the id is looked up rather than assumed.\n"
+                          + "Values are trimmed with an ellipsis rather than allowed to\n"
+                          + "run into the goniometer, so widen the graph strips if long\n"
+                          + "titles are being cut.\n"
                           + "A track change shows this at full strength for six seconds\n"
                           + "even when the rest of the furniture has faded out.",
                           s.DeckShowTrackInfo,
@@ -1306,8 +1314,12 @@ namespace NostalgiaPlus.Ui
                 deck.DropDownItems.Add(new ToolStripSeparator());
 
                 AddToggle(deck.DropDownItems, "Transport and position",
-                          "Previous, play/pause and next, with elapsed time and a seek bar\n"
-                          + "you can click to jump.",
+                          "Previous, play/pause and next, with a seek bar and the clock on\n"
+                          + "the same row. The bar shares its column with the correlation\n"
+                          + "and balance bars below, so the three line up.\n"
+                          + "When the block is too narrow to hold all three side by side\n"
+                          + "the seek bar takes a row of its own instead - half a seek bar\n"
+                          + "is worse than an extra row.",
                           s.DeckShowTransport,
                           delegate { s.DeckShowTransport = !s.DeckShowTransport; o.Changed(true); });
 
@@ -1371,6 +1383,29 @@ namespace NostalgiaPlus.Ui
                           delegate { s.DeckShowBrightness = !s.DeckShowBrightness; o.Changed(true); });
                 deck.Enabled = s.ShowCenterDeck;
                 m.DropDownItems.Add(deck);
+
+                var dh = Sub("Centre deck height", "How much of the bottom band the deck asks for. The band takes\n"
+                                                   + "the larger of this and the waveform lanes, so a taller deck\n"
+                                                   + "never shrinks them - it takes its height off the image.");
+                int[] heights = { 92, 120, 150, 190 };
+                string[] hTips = {
+                    "Compact. One line of metadata beside the artwork, and the\n"
+                    + "transport rows are as tight as they go.",
+                    "Standard. Two lines of metadata, and the readouts have room\n"
+                    + "to breathe. The default.",
+                    "Tall. Four labelled metadata lines - composer, artists, album\n"
+                    + "and year each named.",
+                    "Very tall. Everything at full size, at the cost of about a\n"
+                    + "tenth of the spectrogram."
+                };
+                for (int i = 0; i < heights.Length; i++)
+                {
+                    int captured = heights[i];
+                    Choice(dh, heights[i] + " px", hTips[i], s.DeckHeightPx == captured,
+                           delegate { s.DeckHeightPx = captured; o.Changed(true); });
+                }
+                dh.Enabled = s.ShowCenterDeck;
+                m.DropDownItems.Add(dh);
 
                 var wave = Sub("Waveform height", "How tall the bottom band is - the waveform lanes and the\n"
                                                   + "centre deck share it.");

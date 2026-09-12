@@ -209,7 +209,12 @@ namespace NostalgiaPlus.Ui
             if (info != null && info.Length >= 3)
             {
                 // Straight to the deck: it is the only thing that shows them now.
-                _deck.Title = info[0] ?? ""; _deck.Artist = info[1] ?? ""; _deck.Album = info[2] ?? "";
+                // A short array is fine - the host may not answer for every field.
+                _deck.Title = info[0] ?? "";
+                _deck.Artist = info[1] ?? "";
+                _deck.Album = info[2] ?? "";
+                _deck.Composer = info.Length > 3 ? (info[3] ?? "") : "";
+                _deck.Year = info.Length > 4 ? (info[4] ?? "") : "";
             }
             _infoUntil = DateTime.UtcNow.AddSeconds(6);
             lock (_gate) { _scope.ResetRange(); _meter.Reset(); }
@@ -260,7 +265,10 @@ namespace NostalgiaPlus.Ui
                 // sit at the bottom of the band.
                 int bandH = waveH;
                 if (_settings.ShowCenterDeck)
-                    bandH = Math.Max(bandH, Math.Min(h / 4, CenterDeck.PreferredHeight));
+                {
+                    int want = Math.Max(CenterDeck.PreferredHeight, _settings.DeckHeightPx);
+                    bandH = Math.Max(bandH, Math.Min(h / 3, want));
+                }
 
                 // The bar sits between the panes and the waveform lanes, in space of its
                 // own: floating it over the spectrogram hid the newest few seconds.
@@ -310,7 +318,7 @@ namespace NostalgiaPlus.Ui
                         deck = new Rectangle((w - dw) / 2, deckTop, dw, bandH);
                     }
                 }
-                _deck.Layout(deck, _settings);
+                _deck.Layout(deck, _settings, _fontTiny);
 
                 int capA = Math.Max(8, _waveARect.Width + 4);
                 if (_wfA == null) _wfA = new WaveformRing(capA); else _wfA.Resize(capA);

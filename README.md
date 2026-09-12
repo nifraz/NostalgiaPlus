@@ -130,8 +130,20 @@ semitone gridlines to stay legible - and around 14 seconds of history per side.
 A time-aligned waveform lane runs along the bottom, mirrored the same way and sharing
 the spectrograms' time axis. The gap the two lanes leave in the middle is the **centre
 deck**, and everything that describes the pair of channels rather than one of them lives
-there: artwork and now playing, the goniometer, correlation and balance, the transport
-and seek bar, and nine readouts, each with its own switch under
+there.
+
+It is in three parts. The **goniometer sits on the middle of the deck** - the middle of
+the screen, and the axis the whole display is mirrored about - and the two halves it
+leaves are equal by construction.
+
+**Left: what is playing.** Artwork, then title, composer, artists, album and year. How
+many lines they get follows the deck height - four named lines at 150px, two joined
+pairs at 120, the title alone below that. Composer appears only if MusicBee reports a
+field by that name; the tag id is looked up at startup rather than assumed.
+
+**Right: what the sound is doing.** The transport, seek bar and clock share one row, and
+that bar sits in the same column as the correlation and balance bars below it so the
+three line up. Beside them, nine readouts, each with its own switch under
 *View - Centre deck contents*:
 
 | | |
@@ -148,6 +160,11 @@ and seek bar, and nine readouts, each with its own switch under
 The last three restart with each track. Overs counts excursions no closer than 200ms
 apart, so a master that simply sits on the ceiling reads five a second rather than five
 thousand.
+
+The deck holds what fits and sheds the rest, readout columns first and from the right.
+At a 45% graph on a 1920-wide screen there is room for six of the nine. **Centre deck
+height** (92 / 120 / 150 / 190px) trades image for deck: past 120px the readout grid
+gains a third row, which turns nine readouts into three columns instead of five.
 
 Nothing is painted over the image. The title and the meters used to float in the top
 corners on a gradient bar, which covered the top of both spectrograms and pushed the
@@ -258,7 +275,7 @@ src/
   Ui/
     AnalyzerPanel.cs       docked stereo panel: curve pane plus two spectrogram lanes
     FullscreenView.cs      mirrored stereo view, waveform lanes, backdrop
-    CenterDeck.cs          now playing, goniometer, transport, loudness readouts
+    CenterDeck.cs          metadata, centred goniometer, transport, readouts
     MenuFactory.cs         the right-click menu shared by both views
 ```
 
