@@ -343,6 +343,16 @@ namespace NostalgiaPlus.Ui
                 g.DrawString(text, _fontSmall, brush, 4, top + 2);
         }
 
+        private void ShowHelp()
+        {
+            MenuFactory.ShowHelp(new MenuFactory.Options
+            {
+                IsFullscreen = false,
+                StorageDir = _storageDir,
+                Owner = this,
+            }, _settings);
+        }
+
         // ---------------- interaction ----------------
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -394,6 +404,7 @@ namespace NostalgiaPlus.Ui
         {
             if (keyData == Keys.Space) { _frozen = !_frozen; Invalidate(); return true; }
             if (keyData == Keys.F11) { ToggleFullscreen(); return true; }
+            if (keyData == Keys.F1) { ShowHelp(); return true; }
             return base.ProcessCmdKey(ref msg, keyData);
         }
     }

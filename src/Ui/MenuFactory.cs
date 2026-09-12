@@ -47,7 +47,11 @@ namespace NostalgiaPlus.Ui
         public static void Populate(ContextMenuStrip menu, Settings s, Options o)
         {
             menu.Items.Clear();
-            menu.ShowItemToolTips = true;
+            // Explanations live on each item's Tag, and the help window reads them from
+            // there. They were tooltips until now: five lines of prose that vanish while
+            // you are still reading, cannot be searched, and cannot be compared with the
+            // entry above, is not documentation.
+            menu.ShowItemToolTips = false;
 
             // What is being shown
             menu.Items.Add(Presets(s, o));
@@ -74,33 +78,30 @@ namespace NostalgiaPlus.Ui
             menu.Items.Add(new ToolStripSeparator());
 
             var freeze = new ToolStripMenuItem("Freeze  (Space or click)");
-            freeze.ToolTipText = "Stop the spectrograms scrolling so a moment can be read at leisure.\n"
+            freeze.Tag = "Stop the spectrograms scrolling so a moment can be read at leisure.\n"
                                  + "Analysis keeps running; only the picture is held.";
             freeze.Checked = o.IsFrozen != null && o.IsFrozen();
             OnClick(freeze, delegate { o.ToggleFreeze(); });
             menu.Items.Add(freeze);
 
+            var help = new ToolStripMenuItem("Help  (F1)");
+            help.Tag = "Every entry in this menu, with what it does and what it costs, plus a\n"
+                       + "description of the display itself - the panes, the scales, the deck,\n"
+                       + "and the mouse and keyboard. Searchable.";
+            OnClick(help, delegate { ShowHelp(o, s); });
+            menu.Items.Add(help);
+
             if (o.ToggleFullscreen != null)
             {
                 var fs = new ToolStripMenuItem(o.IsFullscreen
                     ? "Exit fullscreen  (Esc)" : "Fullscreen stereo view  (F11)");
-                fs.ToolTipText = o.IsFullscreen
+                fs.Tag = o.IsFullscreen
                     ? "Return to the docked panel."
                     : "Open the same view full screen, with meters, waveform lanes and track info.";
                 OnClick(fs, delegate { o.ToggleFullscreen(); });
                 menu.Items.Add(fs);
             }
 
-            // A submenu does not inherit the context menu's tooltip setting, so every
-            // dropdown has to be told separately or its items stay silent.
-            menu.ShowItemToolTips = true;
-            TuneTooltip(menu);
-            EnableTips(menu.Items);
-
-            // Removing a handler that is not attached is a no-op, so this stays a single
-            // subscription however many times the menu is opened.
-            menu.Closed -= DismissTips;
-            menu.Closed += DismissTips;
         }
 
         /// <summary>
@@ -114,48 +115,6 @@ namespace NostalgiaPlus.Ui
         /// ToolStrip drop its tooltip immediately, and Populate turns it back on the
         /// next time the menu opens.
         /// </summary>
-        private static readonly ToolStripDropDownClosedEventHandler DismissTips =
-            delegate(object sender, ToolStripDropDownClosedEventArgs e)
-            {
-                var strip = sender as ToolStrip;
-                if (strip == null) return;
-                HideLiveTooltip(strip);
-                strip.ShowItemToolTips = false;
-                DisableTips(strip.Items);
-            };
-
-        /// <summary>
-        /// Takes down a tooltip that is on screen right now.
-        ///
-        /// Setting ShowItemToolTips to false is not enough on its own: the framework
-        /// guards its own hide on that same flag, so by the time the setter would act
-        /// the flag already says tooltips are off and nothing happens. The internal
-        /// method that does the hiding has to be called while the flag is still true.
-        /// Best effort - if the member is not there, the deferred click ordering has
-        /// already prevented the case this was written for.
-        /// </summary>
-        private static void HideLiveTooltip(ToolStrip strip)
-        {
-            try
-            {
-                var m = typeof(ToolStrip).GetMethod("UpdateToolTip",
-                            System.Reflection.BindingFlags.Instance |
-                            System.Reflection.BindingFlags.NonPublic);
-                if (m != null) m.Invoke(strip, new object[] { null });
-            }
-            catch { }
-        }
-
-        private static void DisableTips(ToolStripItemCollection items)
-        {
-            foreach (ToolStripItem it in items)
-            {
-                var mi = it as ToolStripMenuItem;
-                if (mi == null || !mi.HasDropDownItems) continue;
-                mi.DropDown.ShowItemToolTips = false;
-                DisableTips(mi.DropDownItems);
-            }
-        }
 
         /// <summary>
         /// Attaches a click handler that runs after the menu has finished closing.
@@ -189,6 +148,31 @@ namespace NostalgiaPlus.Ui
             };
         }
 
+        /// <summary>
+        /// Opens the help window, or brings the open one forward rather than stacking a
+        /// second copy on top of the first.
+        /// </summary>
+        public static void ShowHelp(Options o, Settings s)
+        {
+            try
+            {
+                if (_help != null && !_help.IsDisposed)
+                {
+                    _help.Activate();
+                    return;
+                }
+                _help = new HelpWindow(s);
+                _help.FormClosed += delegate { _help = null; };
+                // Shown without an owner: the fullscreen view is topmost, and an owned
+                // window would be trapped behind it the moment focus moved.
+                _help.Show();
+                _help.Activate();
+            }
+            catch { }
+        }
+
+        private static HelpWindow _help;
+
         /// <summary>The control a menu item ultimately belongs to, through any nesting.</summary>
         private static Control HostOf(ToolStripItem item)
         {
@@ -203,76 +187,13 @@ namespace NostalgiaPlus.Ui
             return null;
         }
 
-        /// <summary>How long a tooltip stays up. Windows caps this near 32767ms.</summary>
-        private const int TipHoldMs = 30000;
-        /// <summary>How long the pointer has to rest before one appears.</summary>
-        private const int TipDelayMs = 350;
-        /// <summary>Moving to the next item within this shows its tip straight away.</summary>
-        private const int TipReshowMs = 80;
-
-        private static void EnableTips(ToolStripItemCollection items)
-        {
-            foreach (ToolStripItem it in items)
-            {
-                var mi = it as ToolStripMenuItem;
-                if (mi == null || !mi.HasDropDownItems) continue;
-                mi.DropDown.ShowItemToolTips = true;
-                TuneTooltip(mi.DropDown);
-                EnableTips(mi.DropDownItems);
-            }
-        }
-
-        /// <summary>
-        /// Gives the tooltips time to be read.
-        ///
-        /// The default is five seconds, which was chosen for tooltips that say "Save".
-        /// These run to four or five lines and explain what a setting costs as well as
-        /// what it does - five seconds is not enough to finish one, and it vanishing
-        /// mid-sentence is worse than not having it. Thirty seconds, and it still goes
-        /// the moment the pointer moves.
-        ///
-        /// The ToolStrip owns its tooltip privately and exposes no way to configure it,
-        /// so this reaches for the internal instance. Best effort: if the member is not
-        /// there the tooltips still work, just at the default timing.
-        /// </summary>
-        private static void TuneTooltip(ToolStrip strip)
-        {
-            try
-            {
-                var pi = typeof(ToolStrip).GetProperty("ToolTip",
-                             System.Reflection.BindingFlags.Instance |
-                             System.Reflection.BindingFlags.NonPublic);
-                if (pi == null) return;
-                var tip = pi.GetValue(strip, null) as ToolTip;
-                if (tip == null) return;
-                tip.AutoPopDelay = TipHoldMs;
-                tip.InitialDelay = TipDelayMs;
-                tip.ReshowDelay = TipReshowMs;
-            }
-            catch { }
-        }
-
-        /// <summary>The hold time actually in force on a strip, or 0 if it could not be read.</summary>
-        public static int TooltipHoldOf(ToolStrip strip)
-        {
-            try
-            {
-                var pi = typeof(ToolStrip).GetProperty("ToolTip",
-                             System.Reflection.BindingFlags.Instance |
-                             System.Reflection.BindingFlags.NonPublic);
-                if (pi == null) return 0;
-                var tip = pi.GetValue(strip, null) as ToolTip;
-                return tip == null ? 0 : tip.AutoPopDelay;
-            }
-            catch { return 0; }
-        }
 
         // ---------------- small builders ----------------
 
         private static ToolStripMenuItem Sub(string text, string tip)
         {
             var m = new ToolStripMenuItem(text);
-            m.ToolTipText = tip;
+            m.Tag = tip;
             return m;
         }
 
@@ -280,7 +201,7 @@ namespace NostalgiaPlus.Ui
                                    bool ticked, EventHandler onClick)
         {
             var mi = new ToolStripMenuItem(text);
-            mi.ToolTipText = tip;
+            mi.Tag = tip;
             mi.Checked = ticked;
             OnClick(mi, onClick);
             parent.DropDownItems.Add(mi);
@@ -290,7 +211,7 @@ namespace NostalgiaPlus.Ui
                                       bool state, EventHandler onClick)
         {
             var mi = new ToolStripMenuItem(text);
-            mi.ToolTipText = tip;
+            mi.Tag = tip;
             mi.Checked = state;
             OnClick(mi, onClick);
             items.Add(mi);
@@ -353,7 +274,7 @@ namespace NostalgiaPlus.Ui
             m.DropDownItems.Add(new ToolStripSeparator());
 
             var save = new ToolStripMenuItem("Save current as...");
-            save.ToolTipText = "Store every current setting under a name of your own, so an\n"
+            save.Tag = "Store every current setting under a name of your own, so an\n"
                                + "arrangement you like can be returned to.";
             OnClick(save, delegate
             {
@@ -766,18 +687,33 @@ namespace NostalgiaPlus.Ui
             var bar = Sub("Bar and LED size", "Block width for the Bars style, segment height for LED.\n"
                                               + "Affects only those two styles.");
             int[] sizes = { 3, 6, 10, 16 };
-            foreach (int bv in sizes)
+            string[] barTips = {
+                "Thin blocks, close to a continuous trace. The most frequency detail,\n"
+                + "and least of the classic analyser look.",
+                "The default. Blocks read as blocks without merging neighbouring partials.",
+                "Chunky. Adjacent harmonics start sharing a block.",
+                "Coarse bands, in the spirit of an old hardware analyser. Shape rather\n"
+                + "than detail."
+            };
+            for (int i = 0; i < sizes.Length; i++)
             {
-                int captured = bv;
-                Choice(bar, "Bar " + bv + " px", null, s.BarSize == captured,
+                int captured = sizes[i];
+                Choice(bar, "Bar " + sizes[i] + " px", barTips[i], s.BarSize == captured,
                        delegate { s.BarSize = captured; o.Changed(false); });
             }
             bar.DropDownItems.Add(new ToolStripSeparator());
             int[] segs = { 3, 5, 8, 12 };
-            foreach (int lv in segs)
+            string[] ledTips = {
+                "Fine segments, nearly solid.",
+                "The default; visibly segmented without being coarse.",
+                "Clearly stepped, like a hardware meter.",
+                "Few large steps, so level reads as a count of lit segments rather\n"
+                + "than as a height."
+            };
+            for (int i = 0; i < segs.Length; i++)
             {
-                int captured = lv;
-                Choice(bar, "LED segment " + lv + " px", null, s.LedSegment == captured,
+                int captured = segs[i];
+                Choice(bar, "LED segment " + segs[i] + " px", ledTips[i], s.LedSegment == captured,
                        delegate { s.LedSegment = captured; o.Changed(false); });
             }
             m.DropDownItems.Add(bar);
@@ -984,7 +920,7 @@ namespace NostalgiaPlus.Ui
 
             m.DropDownItems.Add(new ToolStripSeparator());
             var note = new ToolStripMenuItem("Click freezes  ·  drag measures");
-            note.ToolTipText = "Dragging reports the interval in semitones and the time between\n"
+            note.Tag = "Dragging reports the interval in semitones and the time between\n"
                                + "the two points.";
             note.Enabled = false;
             m.DropDownItems.Add(note);
@@ -1063,7 +999,7 @@ namespace NostalgiaPlus.Ui
                 Color c = s.GetSlot(captured);
                 var mi = new ToolStripMenuItem(
                     SlotNames[i] + (c.IsEmpty ? "" : "   \u25A0"));
-                mi.ToolTipText = (i < SlotTips.Length ? SlotTips[i] + "\n\n" : "")
+                mi.Tag = (i < SlotTips.Length ? SlotTips[i] + "\n\n" : "")
                                  + (c.IsEmpty ? "Following the palette."
                                               : "Set to #" + ((uint)c.ToArgb()).ToString("X8")
                                                 + ". Right-hand entry below clears it.");
@@ -1086,14 +1022,14 @@ namespace NostalgiaPlus.Ui
             m.DropDownItems.Add(new ToolStripSeparator());
 
             var reset = new ToolStripMenuItem("Back to the palette");
-            reset.ToolTipText = "Clear every override, so all of it follows the palette again.";
+            reset.Tag = "Clear every override, so all of it follows the palette again.";
             OnClick(reset, delegate { s.ClearAllSlots(); o.Changed(false); });
             m.DropDownItems.Add(reset);
 
             if (o.SkinColour != null)
             {
                 var skin = new ToolStripMenuItem("Match the MusicBee skin");
-                skin.ToolTipText = "Take the background, panel and text colours from the skin\n"
+                skin.Tag = "Take the background, panel and text colours from the skin\n"
                                    + "MusicBee is using, so the panel sits in the window rather\n"
                                    + "than on it. The spectrogram palette is left alone - it is a\n"
                                    + "measurement scale, not decoration.";
@@ -1119,7 +1055,7 @@ namespace NostalgiaPlus.Ui
             }
 
             var save = new ToolStripMenuItem("Save these colours as...");
-            save.ToolTipText = "Store the twelve colours under a name. Themes carry colours only,\n"
+            save.Tag = "Store the twelve colours under a name. Themes carry colours only,\n"
                                + "so one can be applied over any preset without dragging that\n"
                                + "preset's analysis settings along.";
             OnClick(save, delegate
@@ -1166,7 +1102,7 @@ namespace NostalgiaPlus.Ui
                       s.ShowQuickButtons,
                       delegate { s.ShowQuickButtons = !s.ShowQuickButtons; o.Changed(true); });
             var compact = new ToolStripMenuItem("Compact buttons");
-            compact.ToolTipText = "Show each button's value alone on one line, halving the height\n"
+            compact.Tag = "Show each button's value alone on one line, halving the height\n"
                                   + "the bar costs. For short docked panels.";
             compact.Checked = s.QuickBarCompact;
             compact.Enabled = s.ShowQuickButtons;
@@ -1174,7 +1110,7 @@ namespace NostalgiaPlus.Ui
             m.DropDownItems.Add(compact);
 
             var split = new ToolStripMenuItem("Split around the centre");
-            split.ToolTipText = "Put half the buttons either side of the centre gutter, so the\n"
+            split.Tag = "Put half the buttons either side of the centre gutter, so the\n"
                                 + "shared frequency axis runs unbroken from top to bottom instead\n"
                                 + "of being crossed by the row.";
             split.Checked = s.QuickBarSplit;
@@ -1195,7 +1131,7 @@ namespace NostalgiaPlus.Ui
                 if (o.ToggleImmersive != null)
                 {
                     var imm = new ToolStripMenuItem("Immersive mode  (I)");
-                    imm.ToolTipText = "For watching rather than measuring: bloom on the spectrograms,\n"
+                    imm.Tag = "For watching rather than measuring: bloom on the spectrograms,\n"
                                       + "a musical axis, slower scroll, and every label fading away\n"
                                       + "while you are not touching anything.";
                     imm.Checked = s.FsImmersive;

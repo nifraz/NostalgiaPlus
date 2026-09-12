@@ -556,39 +556,34 @@ class TestHarness
         Check("clicking it still acts with no host to post to", s.ShowGrid != before,
               before + " -> " + s.ShowGrid);
 
-        // Tooltips are what the deferral exists to let go: they have to be on when the
-        // menu is built, or none of the explanations ever appear.
-        Check("tooltips are enabled on the menu", menu.ShowItemToolTips, "");
-        Check("and carry text", !string.IsNullOrEmpty(grid.ToolTipText),
-              FirstLine(grid.ToolTipText));
-
-        // The timing reaches for a private member of ToolStrip, so it is worth a check:
-        // if that member ever moves, the tooltips quietly revert to five seconds, which
-        // is not long enough to finish reading one.
-        int hold = MenuFactory.TooltipHoldOf(menu);
-        Check("tooltips hold long enough to read", hold >= 20000, hold + " ms");
-
-        var sub = FindOwnerOfDropDown(menu.Items);
-        Check("submenus get the same timing",
-              sub == null || MenuFactory.TooltipHoldOf(sub) >= 20000,
-              sub == null ? "no submenu" : MenuFactory.TooltipHoldOf(sub) + " ms");
+        // Explanations moved off tooltips and onto Tag, where the help window reads
+        // them. The menu must not show tooltips any more, and every item must still
+        // carry its text - losing it here would silently empty the help.
+        Check("the menu shows no tooltips", !menu.ShowItemToolTips, "");
+        Check("items still carry their explanation", !string.IsNullOrEmpty(grid.Tag as string),
+              FirstLine(grid.Tag as string));
 
         int described = 0, total = 0;
         CountTips(menu.Items, ref described, ref total);
         Check("nearly every item explains itself", described >= total * 9 / 10,
               described + " of " + total);
         menu.Dispose();
-    }
 
-    static System.Windows.Forms.ToolStrip FindOwnerOfDropDown(
-        System.Windows.Forms.ToolStripItemCollection items)
-    {
-        foreach (System.Windows.Forms.ToolStripItem it in items)
+        // The help window is the only place those explanations now surface, so it has to
+        // find all of them - including the fullscreen-only half of the View menu, which
+        // is not built when the menu is opened from the docked panel.
+        var help = new HelpWindow(s);
+        try
         {
-            var mi = it as System.Windows.Forms.ToolStripMenuItem;
-            if (mi != null && mi.HasDropDownItems) return mi.DropDown;
+            Check("the help window collects the menu", help.TopicCount > 200,
+                  help.TopicCount + " entries");
+
+            var missing = help.Undocumented();
+            Check("no entry reaches the help undocumented", missing.Count == 0,
+                  missing.Count == 0 ? "all described"
+                                     : string.Join("; ", missing.ToArray()));
         }
-        return null;
+        finally { help.Dispose(); }
     }
 
     static string FirstLine(string text)
@@ -624,7 +619,7 @@ class TestHarness
             var mi = it as System.Windows.Forms.ToolStripMenuItem;
             if (mi == null) continue;
             total++;
-            if (!string.IsNullOrEmpty(mi.ToolTipText)) described++;
+            if (!string.IsNullOrEmpty(mi.Tag as string)) described++;
             if (mi.HasDropDownItems) CountTips(mi.DropDownItems, ref described, ref total);
         }
     }

@@ -800,6 +800,14 @@ namespace NostalgiaPlus.Ui
             Touch();
             switch (keyData)
             {
+                case Keys.F1:
+                    MenuFactory.ShowHelp(new MenuFactory.Options
+                    {
+                        IsFullscreen = true,
+                        StorageDir = _storageDir,
+                        Owner = this,
+                    }, _settings);
+                    return true;
                 case Keys.Escape:
                 case Keys.F11: Close(); return true;
                 case Keys.Space: _frozen = !_frozen; Invalidate(); return true;
