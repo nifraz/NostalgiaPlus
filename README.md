@@ -131,8 +131,23 @@ A time-aligned waveform lane runs along the bottom, mirrored the same way and sh
 the spectrograms' time axis. The gap the two lanes leave in the middle is the **centre
 deck**, and everything that describes the pair of channels rather than one of them lives
 there: artwork and now playing, the goniometer, correlation and balance, the transport
-and seek bar, and LUFS-M / LUFS-S / true peak / crest (true peak turns red above
--1 dBTP). Each of those has its own switch under *View - Centre deck contents*.
+and seek bar, and nine readouts, each with its own switch under
+*View - Centre deck contents*:
+
+| | |
+|---|---|
+| `LUFS-M` / `LUFS-S` | momentary and short-term loudness |
+| `LUFS-I` | gated integrated loudness since the track changed |
+| `LRA` | loudness range in LU - how much the track moves |
+| `TRUE PK` | true peak, red above -1 dBTP |
+| `CREST` | peak minus RMS |
+| `OVERS` | true-peak excursions past -1 dBTP, with the time of the last |
+| `BPM` | tempo, by autocorrelation over the onsets |
+| `BRIGHT` | spectral centre of gravity, in hertz |
+
+The last three restart with each track. Overs counts excursions no closer than 200ms
+apart, so a master that simply sits on the ceiling reads five a second rather than five
+thousand.
 
 Nothing is painted over the image. The title and the meters used to float in the top
 corners on a gradient bar, which covered the top of both spectrograms and pushed the
@@ -143,6 +158,15 @@ drops the rest - artwork first, then the loudness columns, then the title, and t
 transport block last. The goniometer always stays. Widen the graph strips
 (*View - Graph size*) to make room.
 
+**Double-click a spectrogram column to seek there.** The image is a timeline with far
+more detail than a seek bar - you can aim at a single hit. Freezing first is fine: the
+position the jump is measured back from is stamped when the image stops, not when you
+click.
+
+**Press `A` to hold the current average spectrum as an amber reference** and leave it
+there while the music moves under it - take it on one track, start the next, and compare
+tonal balance directly rather than from memory. `A` again drops it.
+
 Right-click anywhere for the full menu - the same one the docked panel uses, plus the
 fullscreen toggles and a curve-width setting.
 
@@ -151,6 +175,7 @@ fullscreen toggles and a curve-width setting.
 | `Esc` / `F11` | Exit |
 | `I` | Immersive mode |
 | `Space` | Freeze |
+| `A` | Hold / drop the comparison curve |
 | `W` | Waveform lane |
 | `O` | Centre deck |
 | `G` | Grid |
@@ -221,7 +246,7 @@ src/
     LoopbackCapture.cs     shared-mode loopback capture thread
   Dsp/
     Fft.cs                 radix-2 FFT, window functions, paired real transform
-    Loudness.cs            BS.1770 K-weighting, LUFS, true peak, correlation
+    Loudness.cs            BS.1770 K-weighting, gated LUFS and LRA, true peak
     SampleRing.cs          lock-guarded ring of recent stereo samples
     FrequencyMap.cs        column to frequency band edges, note naming
     SpectrumAnalyzer.cs    multi-resolution analysis and band stitching

@@ -24,6 +24,22 @@ namespace NostalgiaPlus.Ui
     /// which also pushed the outer frequency labels 84px down the axis to stay clear of
     /// it. Here they cost the image nothing at all.
     /// </summary>
+    /// <summary>
+    /// Everything the deck reads each frame, in one object. As a parameter list this had
+    /// reached eleven and every new readout widened it at both ends.
+    /// </summary>
+    public sealed class DeckInputs
+    {
+        public int[] Lut;
+        public LoudnessMeter Meter;
+        public PlayerBridge Player;
+        public MusicFeatures Features;
+        /// <summary>The spectral centroid resolved to hertz; 0 when there is no map yet.</summary>
+        public double BrightnessHz;
+        public float[] GonL, GonR;
+        public int GonCount;
+    }
+
     public sealed class CenterDeck
     {
         private Rectangle _art, _info, _gonio, _stack, _loud;
@@ -57,10 +73,10 @@ namespace NostalgiaPlus.Ui
         private const int InfoWant = 300;
         /// <summary>
         /// One loudness readout column: a caption over a signed number, at the smallest
-        /// label font. "LUFS-M" is the wide part and it scales with the setting, so a
-        /// fixed column would have the two columns overlapping at large text.
+        /// label font. The caption is the wide part and it scales with the setting, so a
+        /// fixed column would have the columns overlapping at large text.
         /// </summary>
-        private const int LoudCol = 66;
+        private const int LoudCol = 56;
         /// <summary>
         /// Past this the transport gains nothing: the seek bar is already long enough
         /// to aim at, and letting it stretch put the clock half a screen from the
@@ -110,8 +126,11 @@ namespace NostalgiaPlus.Ui
             int need = Need(art, info, gonio, stack, cols * loudCol, square);
             if (need > gap.Width && art)
             { art = false; need = Need(art, info, gonio, stack, cols * loudCol, square); }
-            if (need > gap.Width && cols > 0)
-            { cols = 0; need = Need(art, info, gonio, stack, 0, square); }
+            // Shed readout columns one at a time rather than all of them: they are in
+            // priority order, so the first to go are brightness and tempo and the last
+            // to survive are the two LUFS figures.
+            while (need > gap.Width && cols > 0)
+            { cols--; need = Need(art, info, gonio, stack, cols * loudCol, square); }
             if (need > gap.Width && info)
             { info = false; need = Need(art, info, gonio, stack, cols * loudCol, square); }
             if (need > gap.Width && stack)
@@ -154,11 +173,14 @@ namespace NostalgiaPlus.Ui
             }
         }
 
-        /// <summary>How many of the four loudness readouts are switched on.</summary>
+        /// <summary>How many of the nine readouts are switched on.</summary>
         private static int LoudCount(Settings s)
         {
             return (s.DeckShowLufsM ? 1 : 0) + (s.DeckShowLufsS ? 1 : 0)
-                 + (s.DeckShowTruePeak ? 1 : 0) + (s.DeckShowCrest ? 1 : 0);
+                 + (s.DeckShowLufsI ? 1 : 0) + (s.DeckShowLra ? 1 : 0)
+                 + (s.DeckShowTruePeak ? 1 : 0) + (s.DeckShowCrest ? 1 : 0)
+                 + (s.DeckShowOvers ? 1 : 0) + (s.DeckShowBpm ? 1 : 0)
+                 + (s.DeckShowBrightness ? 1 : 0);
         }
 
         private static int Need(bool art, bool info, bool gonio, bool stack, int loudW, int square)
@@ -216,22 +238,22 @@ namespace NostalgiaPlus.Ui
         /// overlay did and the one part of it worth keeping.
         /// </param>
         public void Draw(Graphics g, Settings s, Font font, Font mid, double alpha,
-                         double infoAlpha, int[] lut, LoudnessMeter meter, PlayerBridge player,
-                         float[] gonL, float[] gonR, int gonCount)
+                         double infoAlpha, DeckInputs inp)
         {
-            if (Bounds.Width <= 0) return;
+            if (Bounds.Width <= 0 || inp == null) return;
             if (alpha <= 0.004)
             {
                 // Everything else is chrome and stays gone; the announcement is not.
                 if (infoAlpha > 0.004 && _info.Width > 0) DrawTrackInfo(g, font, mid, infoAlpha);
                 return;
             }
-            if (_art.Width > 0) DrawArtwork(g, alpha, player);
+            if (_art.Width > 0) DrawArtwork(g, alpha, inp.Player);
             if (_info.Width > 0) DrawTrackInfo(g, font, mid, Math.Max(alpha, infoAlpha));
-            if (_gonio.Width > 0) DrawGoniometer(g, alpha, lut, gonL, gonR, gonCount, font);
-            if (_seek.Width > 0) DrawPlayer(g, font, alpha, player);
-            if (_corr.Width > 0 || _bal.Width > 0) DrawMeters(g, font, alpha, meter);
-            if (_loud.Width > 0) DrawLoudness(g, s, font, mid, alpha, meter);
+            if (_gonio.Width > 0)
+                DrawGoniometer(g, alpha, inp.Lut, inp.GonL, inp.GonR, inp.GonCount, font);
+            if (_seek.Width > 0) DrawPlayer(g, font, alpha, inp.Player);
+            if (_corr.Width > 0 || _bal.Width > 0) DrawMeters(g, font, alpha, inp.Meter);
+            if (_loud.Width > 0) DrawReadouts(g, s, font, mid, alpha, inp);
         }
 
         /// <summary>
@@ -281,12 +303,15 @@ namespace NostalgiaPlus.Ui
         }
 
         /// <summary>
-        /// The loudness readouts, two rows deep. Kept in the order they are read in -
-        /// the two LUFS figures in one column, peak and crest in the next.
+        /// The readouts, two rows deep, in priority order so that shedding a column from
+        /// the right gives up the least useful number first. Paired down each column by
+        /// what belongs together: the two live LUFS figures, then the two programme ones,
+        /// then peak and crest, then what the music is doing.
         /// </summary>
-        private void DrawLoudness(Graphics g, Settings s, Font font, Font mid,
-                                  double alpha, LoudnessMeter meter)
+        private void DrawReadouts(Graphics g, Settings s, Font font, Font mid,
+                                  double alpha, DeckInputs inp)
         {
+            LoudnessMeter meter = inp.Meter;
             if (meter == null || _loudCols <= 0) return;
             double tp = meter.TruePeakDb;
 
@@ -295,18 +320,60 @@ namespace NostalgiaPlus.Ui
             using (var warn = new SolidBrush(StereoScope.FadeColor(Color.FromArgb(255, 255, 120, 90), alpha)))
             {
                 int i = 0;
-                if (s.DeckShowLufsM) Cell(g, font, mid, lbl, val, i++, "LUFS-M", meter.MomentaryLufs);
-                if (s.DeckShowLufsS) Cell(g, font, mid, lbl, val, i++, "LUFS-S", meter.ShortTermLufs);
+                if (s.DeckShowLufsM)
+                    Cell(g, font, mid, lbl, val, i++, "LUFS-M", Db(meter.MomentaryLufs));
+                if (s.DeckShowLufsS)
+                    Cell(g, font, mid, lbl, val, i++, "LUFS-S", Db(meter.ShortTermLufs));
+                if (s.DeckShowLufsI)
+                    Cell(g, font, mid, lbl, val, i++, "LUFS-I", Db(meter.IntegratedLufs));
+                if (s.DeckShowLra)
+                    Cell(g, font, mid, lbl, val, i++, "LRA", meter.LoudnessRange.ToString("0.0"));
                 // Anything above -1 dBTP will clip a lossy encoder even though the sample
                 // peaks never did, which is the whole reason true peak is measured.
-                if (s.DeckShowTruePeak) Cell(g, font, mid, lbl, tp > -1.0 ? warn : val, i++, "TRUE PK", tp);
-                if (s.DeckShowCrest) Cell(g, font, mid, lbl, val, i++, "CREST", meter.CrestDb);
+                if (s.DeckShowTruePeak)
+                    Cell(g, font, mid, lbl, tp > LoudnessMeter.OverThresholdDb ? warn : val,
+                         i++, "TRUE PK", Db(tp));
+                if (s.DeckShowCrest)
+                    Cell(g, font, mid, lbl, val, i++, "CREST", meter.CrestDb.ToString("0.0"));
+                if (s.DeckShowOvers)
+                {
+                    // When it last happened goes in the caption: the cell has one line for
+                    // a number and the count alone does not tell you where to look.
+                    string cap = meter.Overs > 0
+                        ? "OVERS " + Clock((int)(meter.LastOverSeconds * 1000))
+                        : "OVERS";
+                    Cell(g, font, mid, lbl, meter.Overs > 0 ? warn : val, i++, cap,
+                         meter.Overs.ToString());
+                }
+                if (s.DeckShowBpm)
+                {
+                    double bpm = inp.Features == null ? 0 : inp.Features.Bpm;
+                    Cell(g, font, mid, lbl, val, i++, "BPM",
+                         bpm > 0 ? bpm.ToString("0") : "--");
+                }
+                if (s.DeckShowBrightness)
+                    Cell(g, font, mid, lbl, val, i++, "BRIGHT", Hz(inp.BrightnessHz));
             }
+        }
+
+        /// <summary>A level, or a dash when the meter has not settled on one yet.</summary>
+        private static string Db(double v)
+        {
+            return v <= -70.0 ? "--" : v.ToString("0.0");
+        }
+
+        /// <summary>Short enough for a 66px column: 440, 2.4k, 14k.</summary>
+        private static string Hz(double f)
+        {
+            if (f <= 0) return "--";
+            if (f < 1000) return f.ToString("0");
+            double k = f / 1000.0;
+            return (k < 10 ? k.ToString("0.0") : k.ToString("0")) + "k";
         }
 
         /// <summary>One readout: caption over value, filling column-major down each pair.</summary>
         private void Cell(Graphics g, Font font, Font mid, Brush lbl, Brush val,
-                          int index, string name, double value)
+                          int index, string name, string value)
         {
             int col = index / 2, row = index % 2;
             if (col >= _loudCols) return;
@@ -315,11 +382,18 @@ namespace NostalgiaPlus.Ui
             int y = _loud.Y + row * cellH;
 
             SizeF ls = g.MeasureString(name, font);
+            // A caption too wide for its column gives up its tail rather than running
+            // into the next one: "OVERS 2:14" falls back to "OVERS".
+            if (ls.Width > _loudColW - 4)
+            {
+                int cut = name.LastIndexOf(' ');
+                if (cut > 0) { name = name.Substring(0, cut); ls = g.MeasureString(name, font); }
+            }
             SizeF vs = g.MeasureString("-00.0", mid);
             float block = ls.Height + vs.Height;
             float top = y + Math.Max(0, (cellH - block) / 2f);
             g.DrawString(name, font, lbl, x, top);
-            g.DrawString(value.ToString("0.0"), mid, val, x, top + ls.Height);
+            g.DrawString(value, mid, val, x, top + ls.Height);
         }
 
         private void DrawArtwork(Graphics g, double alpha, PlayerBridge player)

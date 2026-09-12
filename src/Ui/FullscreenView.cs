@@ -46,11 +46,14 @@ namespace NostalgiaPlus.Ui
         private Thread _worker;
         private volatile bool _running;
         private volatile bool _frozen;
+        /// <summary>Player position when the image was frozen; -1 when it is live.</summary>
+        private int _frozenAtMs = -1;
         private volatile bool _invalidatePending;
 
         private Rectangle _scopeRect, _waveARect, _waveBRect;
         private readonly QuickBar _quick = new QuickBar();
         private readonly CenterDeck _deck = new CenterDeck();
+        private readonly DeckInputs _deckInputs = new DeckInputs();
         // Sample pairs for the goniometer, refreshed each frame. Fixed length: the trace
         // wants a consistent number of points however long the capture chunk was.
         private readonly float[] _gonL = new float[1024];
@@ -107,7 +110,9 @@ namespace NostalgiaPlus.Ui
                     IsFullscreen = true,
                     ScrollPixels = _scope.Panes.Length > 0 ? _scope.Panes[0].SpectroRect.Width : 1,
                     IsFrozen = delegate { return _frozen; },
-                    ToggleFreeze = delegate { _frozen = !_frozen; Invalidate(); },
+                    ToggleSnapshot = ToggleSnapshot,
+                    HasSnapshot = delegate { lock (_gate) { return _scope.HasSnapshot; } },
+                    ToggleFreeze = delegate { SetFrozen(!_frozen); },
                     ToggleFullscreen = delegate { Close(); },
                     ToggleImmersive = ToggleImmersive,
                     StorageDir = _storageDir,
@@ -612,8 +617,17 @@ namespace NostalgiaPlus.Ui
                 // old corner overlay worth carrying across.
                 double infoAlpha = DateTime.UtcNow < _infoUntil ? 1.0 : 0.0;
                 lock (_gate)
-                    _deck.Draw(g, _settings, _fontTiny, _fontMid, furniture, infoAlpha,
-                               _lut, _meter, _player, _gonL, _gonR, _gonCount);
+                {
+                    _deckInputs.Lut = _lut;
+                    _deckInputs.Meter = _meter;
+                    _deckInputs.Player = _player;
+                    _deckInputs.Features = _scope.Features;
+                    _deckInputs.BrightnessHz = _scope.CentroidHz;
+                    _deckInputs.GonL = _gonL;
+                    _deckInputs.GonR = _gonR;
+                    _deckInputs.GonCount = _gonCount;
+                    _deck.Draw(g, _settings, _fontTiny, _fontMid, furniture, infoAlpha, _deckInputs);
+                }
             }
             if (furniture > 0.004 && _settings.FsShowOsd)
                 _quick.Draw(g, _fontTiny, furniture, _settings.QuickBarCompact);
@@ -683,7 +697,8 @@ namespace NostalgiaPlus.Ui
             if (DateTime.UtcNow > _hintUntil) return;
             string text = (_settings.FsImmersive ? "IMMERSIVE   " : "") +
                           "Click a button to cycle it    Right-click for all options    " +
-                          "I immersive    O deck    H hide OSD    Esc exit    Space freeze    " +
+                          "I immersive    O deck    A compare    H hide OSD    Esc exit    " +
+                          "Space freeze    " +
                           _scope.Analyzer.DescribeResolution() + "    " +
                           _fps.ToString("0") + " fps  " + _analysisMs.ToString("0.0") + " ms dsp  " +
                           _paintMs.ToString("0.0") + " ms paint";
@@ -731,7 +746,49 @@ namespace NostalgiaPlus.Ui
             _mouseDown = false;
             // A click freezes so a moment can be read without it scrolling away; a drag
             // is a measurement and leaves its result on screen until the next press.
-            if (!_dragged) { _frozen = !_frozen; Invalidate(); }
+            if (!_dragged) SetFrozen(!_frozen);
+        }
+
+
+        /// <summary>
+        /// Freezing stops the image but not the player, so the position the image's time
+        /// axis is measured back from is stamped here. Without it, double-clicking a
+        /// column on a frozen image seeks to wherever the track has since got to.
+        /// </summary>
+        private void SetFrozen(bool frozen)
+        {
+            if (frozen && !_frozen)
+                _frozenAtMs = _player == null ? -1 : _player.SafePosition();
+            _frozen = frozen;
+            Invalidate();
+        }
+
+        /// <summary>
+        /// Jump to the moment a column was recorded. The image carries far more detail
+        /// than a seek bar does - you can aim at a single hit - so the timeline is worth
+        /// making clickable.
+        /// </summary>
+        private void SeekToImage(Point p)
+        {
+            if (!_settings.SeekOnImageClick || _player == null || _player.Seek == null) return;
+            double back;
+            lock (_gate) { if (!_scope.SecondsAgoAt(p, _settings, out back)) return; }
+
+            int from = (_frozen && _frozenAtMs >= 0) ? _frozenAtMs : _player.SafePosition();
+            int target = from - (int)(back * 1000.0);
+            if (target < 0) target = 0;
+            // Landing on the last instant of a track just starts the next one.
+            int dur = _player.SafeDuration();
+            if (dur > 1000 && target > dur - 1000) target = dur - 1000;
+            try { _player.Seek(target); } catch { }
+        }
+
+        protected override void OnMouseDoubleClick(MouseEventArgs e)
+        {
+            base.OnMouseDoubleClick(e);
+            if (e.Button != MouseButtons.Left) return;
+            if (_quick.Contains(e.Location) || _deck.Contains(e.Location)) return;
+            SeekToImage(e.Location);
         }
 
         protected override void OnMouseDown(MouseEventArgs e)
@@ -762,7 +819,11 @@ namespace NostalgiaPlus.Ui
                     return true;
                 case Keys.Escape:
                 case Keys.F11: Close(); return true;
-                case Keys.Space: _frozen = !_frozen; Invalidate(); return true;
+                case Keys.Space: SetFrozen(!_frozen); return true;
+                case Keys.A:
+                    ToggleSnapshot();
+                    _hintUntil = DateTime.UtcNow.AddSeconds(1.5);
+                    return true;
                 case Keys.I: ToggleImmersive(); return true;
                 case Keys.W:
                     _settings.FsShowWaveform = !_settings.FsShowWaveform;
@@ -800,6 +861,17 @@ namespace NostalgiaPlus.Ui
         /// cannot rescue a linear axis at the lowest resolution, which is what makes dense
         /// music render as an undifferentiated wall.
         /// </summary>
+        /// <summary>
+        /// Hold the current average spectrum as an amber reference, or drop it. The
+        /// comparison it answers - is this brighter than that - is asked and dismissed
+        /// with the same key, so one action does both.
+        /// </summary>
+        public void ToggleSnapshot()
+        {
+            lock (_gate) { _scope.ToggleSnapshot(); }
+            Invalidate();
+        }
+
         public void ToggleImmersive()
         {
             if (_settings.FsImmersive)

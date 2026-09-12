@@ -34,6 +34,11 @@ namespace NostalgiaPlus.Dsp
     /// the usual reason a "0 dBFS" master still clips a converter.
     ///
     /// Correlation and balance come from the unweighted signal over ~400 ms.
+    ///
+    /// Integrated loudness and loudness range are gated measures over the whole
+    /// programme: momentary blocks for the first, three-second blocks for the second,
+    /// each passed through an absolute -70 LUFS gate and then a relative one. They are
+    /// the figures you quote - momentary and short term only tell you about now.
     /// </summary>
     public sealed class LoudnessMeter
     {
@@ -60,6 +65,30 @@ namespace NostalgiaPlus.Dsp
         private double[] _corrL, _corrR;
         private int _corrWrite, _corrLen, _corrFilled;
 
+        // --- gated loudness over the whole programme ---
+        // Block loudness goes into a histogram rather than a list. Gating needs a
+        // second pass over every block there has ever been, and a 0.1 LU histogram
+        // answers that in fixed memory however long the track - or the stream - runs.
+        private const int HistBins = 751;              // -70.0 to +5.0 LUFS
+        private const double HistLo = -70.0, HistStep = 0.1;
+        private readonly int[] _histM = new int[HistBins];   // 400 ms blocks, 75% overlap
+        private readonly int[] _histS = new int[HistBins];   // 3 s blocks, 2/3 overlap
+        private int _blockStep, _blockCountdown;
+        private int _longStep, _longCountdown;
+        private bool _gatesDirty;
+
+        /// <summary>Above this a lossy encoder will clip even though the samples did not.</summary>
+        public const double OverThresholdDb = -1.0;
+        private static readonly double OverLevel = Math.Pow(10.0, OverThresholdDb / 20.0);
+        /// <summary>
+        /// Excursions closer together than this are one event. Without it a loud master
+        /// that simply sits near the ceiling counts an over on every half cycle, and the
+        /// number says nothing about how often it actually happened.
+        /// </summary>
+        private const double OverHoldoffSeconds = 0.200;
+        private int _overHoldSamples, _overHoldoff;
+        private long _clockSamples;
+
         private double _truePeak;
         private double _peakDecayPerSample;
         private double[] _tpHistL, _tpHistR;
@@ -74,11 +103,24 @@ namespace NostalgiaPlus.Dsp
         public double Correlation { get; private set; }
         /// <summary>-1 fully left, 0 centred, +1 fully right.</summary>
         public double Balance { get; private set; }
+        /// <summary>Gated loudness since the last reset - the figure you quote.</summary>
+        public double IntegratedLufs { get; private set; }
+        /// <summary>
+        /// Loudness range in LU: the spread between the 10th and 95th percentile of the
+        /// three-second blocks that clear the gate. How much the track moves, as opposed
+        /// to how loud it is.
+        /// </summary>
+        public double LoudnessRange { get; private set; }
+        /// <summary>True-peak excursions past -1 dBTP since the last reset.</summary>
+        public int Overs { get; private set; }
+        /// <summary>When the last one happened, in seconds of audio since the reset.</summary>
+        public double LastOverSeconds { get; private set; }
 
         public LoudnessMeter()
         {
             MomentaryLufs = -70; ShortTermLufs = -70; TruePeakDb = -70;
             CrestDb = 0; Correlation = 0; Balance = 0;
+            IntegratedLufs = -70; LoudnessRange = 0;
         }
 
         public void Configure(double sampleRate)
@@ -122,6 +164,19 @@ namespace NostalgiaPlus.Dsp
             _corrWrite = 0; _corrFilled = 0;
             _sumCross = 0; _sumLL = 0; _sumRR = 0;
 
+            // A block every 100 ms and every second: 400 ms blocks overlapping by 75%
+            // and 3 s blocks by two thirds, which is what the two measures are defined on.
+            _blockStep = Math.Max(1, (int)(sampleRate * 0.100));
+            _longStep = Math.Max(1, (int)(sampleRate * 1.000));
+            _blockCountdown = _blockStep;
+            _longCountdown = _longStep;
+            Array.Clear(_histM, 0, HistBins);
+            Array.Clear(_histS, 0, HistBins);
+            _overHoldSamples = Math.Max(1, (int)(sampleRate * OverHoldoffSeconds));
+            _overHoldoff = 0;
+            _clockSamples = 0; Overs = 0; LastOverSeconds = 0;
+            IntegratedLufs = -70; LoudnessRange = 0;
+
             _tpHistL = new double[8];
             _tpHistR = new double[8];
             _tpPos = 0;
@@ -138,6 +193,11 @@ namespace NostalgiaPlus.Dsp
             Array.Clear(_corrL, 0, _corrLen); Array.Clear(_corrR, 0, _corrLen);
             _corrWrite = 0; _corrFilled = 0; _sumCross = 0; _sumLL = 0; _sumRR = 0;
             _truePeak = 0;
+            Array.Clear(_histM, 0, HistBins);
+            Array.Clear(_histS, 0, HistBins);
+            _blockCountdown = _blockStep; _longCountdown = _longStep;
+            _clockSamples = 0; _overHoldoff = 0; Overs = 0; LastOverSeconds = 0;
+            IntegratedLufs = -70; LoudnessRange = 0;
         }
 
         public void Process(double[] left, double[] right, int count)
@@ -173,6 +233,21 @@ namespace NostalgiaPlus.Dsp
                 if (_msWrite >= _shortLen) _msWrite = 0;
                 if (_msFilled < _shortLen) _msFilled++;
 
+                // A block is only taken once its window is genuinely full, or the first
+                // few would be quiet by accident and drag the gated mean down.
+                if (--_blockCountdown <= 0)
+                {
+                    _blockCountdown = _blockStep;
+                    if (_msFilled >= _momentaryLen)
+                    { AddBlock(_histM, _sumMomentary / _momentaryLen); _gatesDirty = true; }
+                }
+                if (--_longCountdown <= 0)
+                {
+                    _longCountdown = _longStep;
+                    if (_msFilled >= _shortLen)
+                    { AddBlock(_histS, _sumShort / _shortLen); _gatesDirty = true; }
+                }
+
                 // --- correlation / balance on the unweighted signal ---
                 if (_corrFilled == _corrLen)
                 {
@@ -204,6 +279,31 @@ namespace NostalgiaPlus.Dsp
                 }
                 _truePeak *= _peakDecayPerSample;
                 if (localPeak > _truePeak) _truePeak = localPeak;
+
+                // One over per moment rather than per sample: a clipped passage is one
+                // event to the ear and several thousand to a naive counter.
+                if (_overHoldoff > 0) _overHoldoff--;
+                if (localPeak > OverLevel && _overHoldoff == 0)
+                {
+                    Overs++;
+                    LastOverSeconds = _clockSamples / _sampleRate;
+                    _overHoldoff = _overHoldSamples;
+                }
+                _clockSamples++;
+            }
+
+            if (_gatesDirty)
+            {
+                _gatesDirty = false;
+                double unused;
+                IntegratedLufs = Gated(_histM, 10.0, out unused);
+                double gate;
+                Gated(_histS, 20.0, out gate);
+                // The spread of what is left, not of everything: without the gate a
+                // single silent passage sets the bottom of the range.
+                double hi = Percentile(_histS, gate, 0.95);
+                double lo = Percentile(_histS, gate, 0.10);
+                LoudnessRange = (hi > -300 && lo > -300) ? Math.Max(0.0, hi - lo) : 0.0;
             }
 
             int mCount = Math.Min(_msFilled, _momentaryLen);
@@ -226,6 +326,82 @@ namespace NostalgiaPlus.Dsp
                 double rms = Math.Sqrt((_sumLL + _sumRR) / (2.0 * _corrFilled));
                 CrestDb = rms > 1e-9 ? 20.0 * Math.Log10(Math.Max(1e-9, _truePeak) / rms) : 0.0;
             }
+        }
+
+        // ---- gating ----
+
+        /// <summary>
+        /// One block's loudness into the histogram. Anything under -70 LUFS is silence
+        /// as far as the measure is concerned and is dropped here, which is the absolute
+        /// gate - so everything in the histogram has already passed it.
+        /// </summary>
+        private static void AddBlock(int[] hist, double meanSquare)
+        {
+            if (meanSquare <= 0) return;
+            double l = -0.691 + 10.0 * Math.Log10(meanSquare);
+            if (l < HistLo) return;
+            int i = (int)Math.Floor((l - HistLo) / HistStep + 0.5);
+            if (i < 0) i = 0; else if (i >= HistBins) i = HistBins - 1;
+            hist[i]++;
+        }
+
+        /// <summary>
+        /// The gated mean: the mean of every block, then the mean again of the blocks
+        /// that clear a threshold that many LU below it. Two passes, because the
+        /// threshold cannot be known until the first pass has run.
+        /// </summary>
+        private static double Gated(int[] hist, double relativeLu, out double threshold)
+        {
+            double first = MeanAbove(hist, double.NegativeInfinity);
+            if (first <= -300) { threshold = -300; return -70.0; }
+            threshold = first - relativeLu;
+            double second = MeanAbove(hist, threshold);
+            return second <= -300 ? -70.0 : second;
+        }
+
+        /// <summary>
+        /// Mean loudness of the blocks above a threshold. Averaged as power and
+        /// converted back, never as decibels - the mean of two dB figures is not the
+        /// dB of their mean, and the difference is the whole measurement.
+        /// </summary>
+        private static double MeanAbove(int[] hist, double aboveLufs)
+        {
+            double sum = 0; long n = 0;
+            for (int i = 0; i < HistBins; i++)
+            {
+                if (hist[i] == 0) continue;
+                double l = HistLo + i * HistStep;
+                if (l <= aboveLufs) continue;
+                sum += hist[i] * Math.Pow(10.0, (l + 0.691) / 10.0);
+                n += hist[i];
+            }
+            return n == 0 ? -300.0 : -0.691 + 10.0 * Math.Log10(sum / n);
+        }
+
+        /// <summary>Loudness at a percentile of the blocks above a threshold.</summary>
+        private static double Percentile(int[] hist, double aboveLufs, double p)
+        {
+            long total = 0;
+            for (int i = 0; i < HistBins; i++)
+            {
+                if (hist[i] == 0) continue;
+                if (HistLo + i * HistStep <= aboveLufs) continue;
+                total += hist[i];
+            }
+            if (total == 0) return -300.0;
+
+            long want = (long)Math.Ceiling(total * p);
+            if (want < 1) want = 1;
+            long run = 0;
+            for (int i = 0; i < HistBins; i++)
+            {
+                if (hist[i] == 0) continue;
+                double l = HistLo + i * HistStep;
+                if (l <= aboveLufs) continue;
+                run += hist[i];
+                if (run >= want) return l;
+            }
+            return -300.0;
         }
 
         // ---- filter design (RBJ cookbook; reproduces the published a-coefficients) ----

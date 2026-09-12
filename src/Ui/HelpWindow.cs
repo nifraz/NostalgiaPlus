@@ -209,9 +209,21 @@ namespace NostalgiaPlus.Ui
                 + "negative means the channels partly cancel and the track will lose material when "
                 + "summed to mono. Balance is simply which side is louder.\n\n"
                 + "Alongside them are the album art and what is playing, the transport with elapsed "
-                + "time and a seek bar you can click, and the four loudness readouts: LUFS momentary "
-                + "and short term, true peak, and crest factor. True peak turns red above -1 dBTP, "
-                + "where a lossy encoder will clip even though the samples never did.\n\n"
+                + "time and a seek bar you can click, and nine readouts.\n\n"
+                + "Four of those describe loudness right now: LUFS momentary and short term, true "
+                + "peak, and crest factor. True peak turns red above -1 dBTP, where a lossy encoder "
+                + "will clip even though the samples never did.\n\n"
+                + "Three describe the track as a whole, and build up as it plays. Integrated LUFS is "
+                + "the gated figure a track is quoted at - around -14 is what Spotify normalises to, "
+                + "-16 Apple. Loudness range is how much it moves, in LU: under 3 is flattened, 8 or "
+                + "more has its dynamics. Overs counts how many times true peak passed -1 dBTP, with "
+                + "the time of the last one in the caption; excursions within 200ms count once, so a "
+                + "master sitting on the ceiling reads five a second rather than five thousand. All "
+                + "three restart when the track changes.\n\n"
+                + "The last two describe the music rather than the master: tempo in BPM, and "
+                + "brightness - where the energy is sitting, as a frequency. Both show -- when there "
+                + "is no confident answer. Brightness is worth watching move rather than reading: it "
+                + "climbing through a build is the cymbals arriving.\n\n"
                 + "The title and those readouts used to float in the top corners of the screen, on a "
                 + "bar painted over the top of both spectrograms. They cost the image nothing here, "
                 + "and the repeated frequency labels now run the full height of the axis instead of "
@@ -230,11 +242,21 @@ namespace NostalgiaPlus.Ui
                 + "live spectrum - so pointing ten seconds back reports what happened then.\n\n"
                 + "Drag to measure: the readout reports the interval in semitones and the time between "
                 + "the two points.\n\n"
-                + "Keys, in the fullscreen view: F11 or Esc leaves, Space freezes, I toggles immersive "
-                + "mode, H hides the on-screen display, O the centre deck, W the waveform "
-                + "lanes, G the gridlines, M mirror, B the graph style, C the channel mode, P the "
-                + "palette. F1 opens this window. In the docked panel, F11 goes fullscreen and Space "
-                + "freezes.", 1);
+                + "Double-click a spectrogram column to jump the player to the moment that produced "
+                + "it. The image is a timeline with far more detail than a seek bar has - you can aim "
+                + "at one hit. Freeze first if you want to take your time: the position the jump is "
+                + "measured back from is stamped when the image stops, not when you click, so a frozen "
+                + "picture still lands where you point. Only the spectrograms respond; the curve "
+                + "strips and the label columns are not a timeline.\n\n"
+                + "Press A to hold the current average spectrum as an amber line, and leave it there "
+                + "while the music moves under it. That is how to answer \"is this master brighter "
+                + "than that one\" without trusting your memory of a curve from thirty seconds ago: "
+                + "take it on one track, start the other, and compare. A again drops it.\n\n"
+                + "Keys, in the fullscreen view: F11 or Esc leaves, Space freezes, A holds or drops "
+                + "the comparison curve, I toggles immersive mode, H hides the on-screen display, O "
+                + "the centre deck, W the waveform lanes, G the gridlines, M mirror, B the graph "
+                + "style, C the channel mode, P the palette. F1 opens this window. In the docked "
+                + "panel, F11 goes fullscreen, Space freezes and A compares.", 1);
 
             Add(S, "Where your settings are kept",
                 "Settings are stored as plain key=value text under MusicBee's persistent storage path, "
@@ -262,6 +284,11 @@ namespace NostalgiaPlus.Ui
                     ScrollPixels = 900,
                     IsFrozen = delegate { return false; },
                     ToggleFreeze = delegate { },
+                    // Entries that appear only when the view wires them up still have to
+                    // be collected, or the one item nobody documented is the one item
+                    // this check cannot see.
+                    ToggleSnapshot = delegate { },
+                    HasSnapshot = delegate { return false; },
                     Changed = delegate(bool rebuild) { },
                 });
                 Walk(menu.Items, null, 0);

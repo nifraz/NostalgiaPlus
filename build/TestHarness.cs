@@ -259,7 +259,106 @@ class TestHarness
         m4.Process(L, R, n);
         Check("right-only signal reads hard right", m4.Balance > 0.98,
               m4.Balance.ToString("0.000"));
+
+        TestGatedLoudness();
         Console.WriteLine();
+    }
+
+    /// <summary>
+    /// Integrated loudness, loudness range and the true-peak over counter.
+    ///
+    /// These are gated measures over a whole programme, so a four-second buffer will not
+    /// exercise them; the range test in particular needs enough three-second blocks for
+    /// a percentile to mean anything. Driven at 16 kHz to keep the harness quick - the
+    /// gating is rate-independent, and the range is a difference between two levels of
+    /// the same tone, so K-weighting cancels out of it.
+    /// </summary>
+    static void TestGatedLoudness()
+    {
+        // --- a steady tone: integrated has to agree with short term ---
+        var m = new LoudnessMeter();
+        m.Configure(Sr);
+        int n = (int)(Sr * 6);
+        var L = new double[n];
+        var R = new double[n];
+        double amp = Math.Pow(10.0, -23.0 / 20.0);
+        for (int i = 0; i < n; i++) { L[i] = amp * Math.Sin(2 * Math.PI * 1000 * i / Sr); R[i] = L[i]; }
+        m.Process(L, R, n);
+
+        Check("integrated LUFS of a steady -23 dBFS tone",
+              Math.Abs(m.IntegratedLufs + 23.0) < 0.35,
+              m.IntegratedLufs.ToString("0.00") + " LUFS (expected -23.00)");
+        Check("and a steady tone has no range", m.LoudnessRange < 0.6,
+              m.LoudnessRange.ToString("0.00") + " LU");
+        Check("nothing near full scale reads no overs", m.Overs == 0, m.Overs + " overs");
+
+        // --- 10 dB apart in six-second stretches: the range is that 10 dB ---
+        const double Rate = 16000;
+        var m5 = new LoudnessMeter();
+        m5.Configure(Rate);
+        int seg = (int)(Rate * 6);
+        int total = seg * 8;                       // 48 s, about 45 three-second blocks
+        var l2 = new double[total];
+        var r2 = new double[total];
+        double loud = Math.Pow(10.0, -20.0 / 20.0);
+        double quiet = Math.Pow(10.0, -30.0 / 20.0);
+        for (int i = 0; i < total; i++)
+        {
+            double a = ((i / seg) % 2 == 0) ? loud : quiet;
+            l2[i] = a * Math.Sin(2 * Math.PI * 1000 * i / Rate);
+            r2[i] = l2[i];
+        }
+        m5.Process(l2, r2, total);
+        Check("loudness range of a 10 dB swing", Math.Abs(m5.LoudnessRange - 10.0) < 1.5,
+              m5.LoudnessRange.ToString("0.00") + " LU (expected 10.00)");
+        // Power-averaged and then gated, so it sits near the loud half rather than
+        // halfway between the two.
+        Check("and its integrated value is between the two levels",
+              m5.IntegratedLufs > -30.0 && m5.IntegratedLufs < -20.0,
+              m5.IntegratedLufs.ToString("0.00") + " LUFS");
+
+        // --- five short bursts past the ceiling ---
+        var m6 = new LoudnessMeter();
+        m6.Configure(Rate);
+        int len = (int)(Rate * 6);
+        var l3 = new double[len];
+        var r3 = new double[len];
+        int burst = (int)(Rate * 0.05);            // well inside the 200 ms hold-off
+        for (int b = 0; b < 5; b++)
+        {
+            int start = (int)(Rate * (0.5 + b));   // a second apart, so five events
+            for (int i = 0; i < burst; i++)
+            {
+                l3[start + i] = 0.999 * Math.Sin(2 * Math.PI * 500 * i / Rate);
+                r3[start + i] = l3[start + i];
+            }
+        }
+        m6.Process(l3, r3, len);
+        Check("five bursts past -1 dBTP count as five overs", m6.Overs == 5,
+              m6.Overs + " overs");
+        Check("and the last one is timed at the last burst",
+              Math.Abs(m6.LastOverSeconds - 4.5) < 0.1,
+              m6.LastOverSeconds.ToString("0.00") + "s (expected 4.50)");
+
+        // A sustained loud passage is one clipping event per hold-off, not one per peak.
+        var m7 = new LoudnessMeter();
+        m7.Configure(Rate);
+        for (int i = 0; i < len; i++)
+        {
+            l3[i] = 0.999 * Math.Sin(2 * Math.PI * 500 * i / Rate);
+            r3[i] = l3[i];
+        }
+        m7.Process(l3, r3, len);
+        Check("a sustained loud passage counts per hold-off, not per peak",
+              m7.Overs > 20 && m7.Overs < 35, m7.Overs + " overs in 6s");
+
+        var m8 = new LoudnessMeter();
+        m8.Configure(Rate);
+        m8.Process(l3, r3, len);
+        m8.Reset();
+        Check("reset clears the gated state", m8.Overs == 0 && m8.IntegratedLufs <= -70
+              && m8.LoudnessRange == 0, m8.Overs + " overs, "
+              + m8.IntegratedLufs.ToString("0.0") + " LUFS");
     }
 
     /// <summary>
@@ -371,7 +470,7 @@ class TestHarness
 
         var deck = new CenterDeck();
         var wide = new Settings();
-        deck.Layout(new Rectangle(0, 0, 700, 110), wide);
+        deck.Layout(new Rectangle(0, 0, 900, 110), wide);
         Check("a wide gap fits everything",
               deck.ArtRect.Width > 0 && deck.InfoRect.Width > 0 && deck.GoniometerRect.Width > 0
               && deck.StackRect.Width > 0 && deck.LoudnessRect.Width > 0, "");
@@ -380,26 +479,39 @@ class TestHarness
               && deck.InfoRect.Right <= deck.GoniometerRect.Left
               && deck.GoniometerRect.Right <= deck.StackRect.Left
               && deck.StackRect.Right <= deck.LoudnessRect.Left, "");
+        int allNine = deck.LoudnessRect.Width;
 
         // Each readout has its own switch, so turning one off has to give its width back
         // rather than leave a hole where it used to be.
         var picky = new Settings();
         picky.DeckShowTrackInfo = false;
-        picky.DeckShowLufsM = picky.DeckShowLufsS = false;
-        picky.DeckShowTruePeak = picky.DeckShowCrest = false;
-        deck.Layout(new Rectangle(0, 0, 700, 110), picky);
+        picky.DeckShowLufsM = picky.DeckShowLufsS = picky.DeckShowLufsI = false;
+        picky.DeckShowLra = picky.DeckShowTruePeak = picky.DeckShowCrest = false;
+        picky.DeckShowOvers = picky.DeckShowBpm = picky.DeckShowBrightness = false;
+        deck.Layout(new Rectangle(0, 0, 900, 110), picky);
         Check("switched-off readouts take no room",
               deck.InfoRect.Width == 0 && deck.LoudnessRect.Width == 0
               && deck.GoniometerRect.Width > 0, "");
 
-        // Two rows deep, so halving the readouts halves the columns rather than the rows.
+        // Two rows deep, so readouts cost columns rather than rows: two readouts are one
+        // column, four are two, and all nine are five.
         picky.DeckShowLufsM = picky.DeckShowTruePeak = true;
-        deck.Layout(new Rectangle(0, 0, 700, 110), picky);
+        deck.Layout(new Rectangle(0, 0, 900, 110), picky);
         int twoWide = deck.LoudnessRect.Width;
-        deck.Layout(new Rectangle(0, 0, 700, 110), wide);
-        Check("the loudness grid stacks two to a column",
-              twoWide > 0 && twoWide * 2 == deck.LoudnessRect.Width,
-              twoWide + "px for two, " + deck.LoudnessRect.Width + "px for four");
+        picky.DeckShowLufsS = picky.DeckShowCrest = true;
+        deck.Layout(new Rectangle(0, 0, 900, 110), picky);
+        Check("the readout grid stacks two to a column",
+              twoWide > 0 && twoWide * 2 == deck.LoudnessRect.Width
+              && twoWide * 5 == allNine,
+              twoWide + "px for two, " + deck.LoudnessRect.Width + "px for four, "
+              + allNine + "px for nine");
+
+        // Columns are shed one at a time from the right, not all at once: at a width
+        // that cannot hold five the grid keeps as many as it can.
+        deck.Layout(new Rectangle(0, 0, 620, 110), wide);
+        Check("a tight gap sheds readout columns one at a time",
+              deck.LoudnessRect.Width > 0 && deck.LoudnessRect.Width < allNine,
+              deck.LoudnessRect.Width + "px of " + allNine + "px");
 
         deck.Layout(new Rectangle(0, 0, 420, 110), wide);
         Check("a narrow gap drops the artwork first",
@@ -423,6 +535,66 @@ class TestHarness
               deck.GoniometerRect.Width == 0 && deck.StackRect.Width == 0, "");
 
         TestOuterLabelColumns();
+        TestImageTimeline();
+    }
+
+    /// <summary>
+    /// The image as a timeline: what a pixel means in seconds, which is what
+    /// double-click-to-seek turns into a player position - and the reference curve,
+    /// which is held and dropped by the same action.
+    /// </summary>
+    static void TestImageTimeline()
+    {
+        var s = new Settings();
+        s.ScrollDivider = 2;
+        double plain = StereoScope.RowsPerSecond(s);
+        s.ImmCinematic = true;
+        double cine = StereoScope.RowsPerSecond(s);
+        // Three places used to divide by ScrollDivider alone and so read four times
+        // fast here; they all ask this one method now.
+        Check("cinematic mode quarters the scroll rate",
+              plain > 0 && Math.Abs(plain - cine * 4) < 1e-9,
+              plain.ToString("0.0") + " vs " + cine.ToString("0.0") + " columns/s");
+        s.ImmCinematic = false;
+
+        var scope = new StereoScope();
+        scope.SetPalette(Palette.BuildLut(s.Palette));
+        scope.Layout(new Rectangle(0, 0, 1200, 600), s, 48000);
+        ChannelPane[] panes = scope.Panes;
+        Check("two panes to read time off", panes.Length == 2, panes.Length + " panes");
+        if (panes.Length < 2) { scope.Dispose(); return; }
+
+        Rectangle sr = panes[0].SpectroRect;
+        int y = sr.Top + sr.Height / 2;
+        int newest = panes[0].CurveOnLeft ? sr.Left : sr.Right - 1;
+        int dir = panes[0].CurveOnLeft ? 1 : -1;
+        double t;
+
+        Check("the newest column is now",
+              scope.SecondsAgoAt(new Point(newest, y), s, out t) && t < 1e-9,
+              t.ToString("0.000") + "s");
+        Check("and 120 columns back is 120 columns of time",
+              scope.SecondsAgoAt(new Point(newest + dir * 120, y), s, out t)
+              && Math.Abs(t - 120.0 / plain) < 1e-6,
+              t.ToString("0.000") + "s (expected " + (120.0 / plain).ToString("0.000") + ")");
+
+        // Only the spectrograms are a timeline. Seeking off the curve strip or the
+        // label gutter would jump to a time the pixel never stood for.
+        if (scope.GutterRect.Width > 2)
+            Check("the label gutter is not a timeline",
+                  !scope.SecondsAgoAt(new Point(scope.GutterRect.Left + 1, y), s, out t), "");
+        Check("nor is anything above the image",
+              !scope.SecondsAgoAt(new Point(newest, sr.Top - 4), s, out t), "");
+
+        // --- the reference curve ---
+        Check("no comparison curve to begin with", !scope.HasSnapshot, "");
+        scope.ToggleSnapshot();
+        Check("holding one takes it on both panes",
+              scope.HasSnapshot && panes[0].HasSnapshot && panes[1].HasSnapshot, "");
+        scope.ToggleSnapshot();
+        Check("and the same action drops it",
+              !scope.HasSnapshot && !panes[0].HasSnapshot && !panes[1].HasSnapshot, "");
+        scope.Dispose();
     }
 
     /// <summary>
@@ -618,6 +790,8 @@ class TestHarness
             ScrollPixels = 800,
             IsFrozen = delegate { return false; },
             ToggleFreeze = delegate { },
+            ToggleSnapshot = delegate { },
+            HasSnapshot = delegate { return false; },
             Changed = delegate(bool rebuild) { },
         });
 

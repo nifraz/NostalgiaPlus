@@ -32,6 +32,9 @@ namespace NostalgiaPlus.Ui
             public Action ToggleFreeze;
             public Action ToggleFullscreen;
             public Action ToggleImmersive;
+            /// <summary>Hold or drop the reference curve; null hides the entry.</summary>
+            public Action ToggleSnapshot;
+            public Func<bool> HasSnapshot;
             /// <summary>Docked only: resize the host panel now, rather than next launch.</summary>
             public Action<int> SetDockHeight;
             /// <summary>Where user presets live; null disables them.</summary>
@@ -736,6 +739,21 @@ namespace NostalgiaPlus.Ui
                       "Fill under the curve instead of drawing the outline alone.",
                       s.SolidFill, delegate { s.SolidFill = !s.SolidFill; o.Changed(false); });
 
+            if (o.ToggleSnapshot != null)
+            {
+                bool held = o.HasSnapshot != null && o.HasSnapshot();
+                AddToggle(m.DropDownItems,
+                          (held ? "Drop the comparison curve" : "Hold this curve to compare")
+                          + "  (A)",
+                          "Freeze the current average spectrum as an amber line and leave\n"
+                          + "it there while the music moves under it. The way to answer\n"
+                          + "\"is this master brighter than that one\" without trusting\n"
+                          + "your memory of a curve from thirty seconds ago.\n"
+                          + "Take it on one track, then start the other and compare.\n"
+                          + "Press A again, or pick this again, to drop it.",
+                          held, delegate { o.ToggleSnapshot(); o.Changed(false); });
+            }
+
             var decay = Sub("Peak hold decay", "How fast the maximum trace gives up a reading. Slow holds a\n"
                                                + "whole track's envelope; fast follows the music.");
             double[] decays = { 4, 8, 14, 24, 40 };
@@ -918,8 +936,18 @@ namespace NostalgiaPlus.Ui
                       + "way to tell which.",
                       s.ShowHarmonics, delegate { s.ShowHarmonics = !s.ShowHarmonics; o.Changed(false); });
 
+            AddToggle(m.DropDownItems, "Double-click seeks",
+                      "Double-click a spectrogram column to jump the player to the moment\n"
+                      + "that produced it. The image is a timeline with far more detail\n"
+                      + "than a seek bar has - you can aim at one hit.\n"
+                      + "Freeze first to take your time: the position the jump is measured\n"
+                      + "back from is stamped when the image stops, not when you click.\n"
+                      + "Only over a spectrogram; the curve strips are not a timeline.",
+                      s.SeekOnImageClick,
+                      delegate { s.SeekOnImageClick = !s.SeekOnImageClick; o.Changed(false); });
+
             m.DropDownItems.Add(new ToolStripSeparator());
-            var note = new ToolStripMenuItem("Click freezes  ·  drag measures");
+            var note = new ToolStripMenuItem("Click freezes  ·  drag measures  ·  double-click seeks");
             note.Tag = "Dragging reports the interval in semitones and the time between\n"
                                + "the two points.";
             note.Enabled = false;
@@ -957,7 +985,8 @@ namespace NostalgiaPlus.Ui
         private static readonly string[] SlotNames = {
             "Background", "Panels and strips", "Gridlines", "Fine gridlines",
             "Axis text", "Unit captions", "Spectrum curve", "Peak trace",
-            "Average trace", "Minimum trace", "Hover", "Waveform"
+            "Average trace", "Minimum trace", "Hover", "Waveform",
+            "Comparison curve"
         };
 
         private static readonly string[] SlotTips = {
@@ -972,7 +1001,8 @@ namespace NostalgiaPlus.Ui
             "The running average, normally blue.",
             "The quietest level seen, normally grey.",
             "The crosshair, the readout and the note pin.",
-            "The waveform lanes under each pane."
+            "The waveform lanes under each pane.",
+            "The held reference curve, normally amber."
         };
 
         /// <summary>
@@ -1234,9 +1264,11 @@ namespace NostalgiaPlus.Ui
                           delegate { s.ShowCenterDeck = !s.ShowCenterDeck; o.Changed(true); });
 
                 var deck = Sub("Centre deck contents", "One switch per readout. Anything that will not fit the gap is\n"
-                                                       + "dropped anyway - artwork first, then the loudness columns, then\n"
-                                                       + "correlation, the title and the transport. The goniometer is the\n"
-                                                       + "last thing standing.");
+                                                       + "dropped anyway - artwork first, then readout columns from the\n"
+                                                       + "right one at a time, then the title, then the transport block.\n"
+                                                       + "The goniometer is the last thing standing.\n"
+                                                       + "The readouts are in priority order, so brightness and tempo go\n"
+                                                       + "before the two LUFS figures do.");
                 AddToggle(deck.DropDownItems, "Track info",
                           "Title, then artist and album. Trimmed with an ellipsis rather\n"
                           + "than allowed to run into the goniometer beside it, so widen\n"
@@ -1303,6 +1335,40 @@ namespace NostalgiaPlus.Ui
                           + "squeezed out of it.",
                           s.DeckShowCrest,
                           delegate { s.DeckShowCrest = !s.DeckShowCrest; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "Integrated LUFS",
+                          "Gated loudness over everything played since the track changed -\n"
+                          + "the single figure a track is quoted at, and the one streaming\n"
+                          + "services normalise to. Around -14 is Spotify, -16 Apple.\n"
+                          + "Reads -- until 400ms of audio has gone through it.",
+                          s.DeckShowLufsI,
+                          delegate { s.DeckShowLufsI = !s.DeckShowLufsI; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "Loudness range",
+                          "How much the track moves, in LU: the spread between the 10th and\n"
+                          + "95th percentile of its three-second blocks. Under 3 LU is\n"
+                          + "flattened, 8 or more keeps its dynamics. Needs a few seconds\n"
+                          + "of playback before it means anything.",
+                          s.DeckShowLra,
+                          delegate { s.DeckShowLra = !s.DeckShowLra; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "True-peak overs",
+                          "How many times true peak has passed -1 dBTP since the track\n"
+                          + "started, with the time of the last one beside the caption.\n"
+                          + "Excursions within 200ms count once, so a master that simply\n"
+                          + "sits near the ceiling reads five a second rather than a\n"
+                          + "meaningless five thousand.",
+                          s.DeckShowOvers,
+                          delegate { s.DeckShowOvers = !s.DeckShowOvers; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "Tempo",
+                          "Beats per minute, by autocorrelation over the onsets of the last\n"
+                          + "eight seconds. Shows -- when nothing convincing is there,\n"
+                          + "which is the honest answer for rubato and free time.",
+                          s.DeckShowBpm,
+                          delegate { s.DeckShowBpm = !s.DeckShowBpm; o.Changed(true); });
+                AddToggle(deck.DropDownItems, "Brightness",
+                          "Where the energy is sitting, as a frequency: the spectral centre\n"
+                          + "of gravity. Watch it move rather than reading the number - it\n"
+                          + "climbing through a build is the cymbals arriving.",
+                          s.DeckShowBrightness,
+                          delegate { s.DeckShowBrightness = !s.DeckShowBrightness; o.Changed(true); });
                 deck.Enabled = s.ShowCenterDeck;
                 m.DropDownItems.Add(deck);
 

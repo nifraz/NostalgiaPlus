@@ -67,10 +67,74 @@ namespace NostalgiaPlus.Render
         public SpectrumAnalyzer Analyzer { get { return _analyzer; } }
         /// <summary>What the music is doing, for the views to react to.</summary>
         public MusicFeatures Features { get { return _features; } }
+        /// <summary>
+        /// The spectral centroid as a frequency rather than a position on the axis, so
+        /// it can be read as a number. Inverting through the map rather than
+        /// interpolating hertz directly, because the centroid is taken over bins - on a
+        /// note axis that is a musical centre of gravity, not an arithmetic one.
+        /// </summary>
+        public double CentroidHz
+        {
+            get { return _map == null ? 0.0 : _map.XToFreq(_features.Centroid * _map.Width); }
+        }
 
         public StereoScope() { FloorDb = -95; CeilingDb = -5; }
 
+        /// <summary>
+        /// Spectrogram columns pushed per second.
+        ///
+        /// The cinematic setting quarters the scroll rate, and three separate places
+        /// converted pixels to seconds by dividing by ScrollDivider alone - so the time
+        /// marks, the hover readout and the drag measurement all read four times fast
+        /// with it on. One place now owns the answer.
+        /// </summary>
+        public static double RowsPerSecond(Settings s)
+        {
+            int div = s.ImmCinematic ? s.ScrollDivider * 4 : s.ScrollDivider;
+            return (double)s.TargetFps / Math.Max(1, div);
+        }
+
+        /// <summary>
+        /// How far back in time a point on the image is. False when the point is not on
+        /// a spectrogram - the curve strips, the gutter and the scale lane are not a
+        /// timeline and must not be treated as one.
+        /// </summary>
+        public bool SecondsAgoAt(Point p, Settings s, out double secondsAgo)
+        {
+            secondsAgo = 0;
+            double rps = RowsPerSecond(s);
+            if (rps <= 0) return false;
+            for (int i = 0; i < _panes.Length; i++)
+            {
+                if (!_panes[i].SpectroRect.Contains(p)) continue;
+                int age = _panes[i].AgeAt(p.X);
+                if (age < 0) return false;
+                secondsAgo = age / rps;
+                return true;
+            }
+            return false;
+        }
+
         public void SetPalette(int[] lut) { _lut = lut; }
+
+        /// <summary>True while a reference curve is being held for comparison.</summary>
+        public bool HasSnapshot { get { return _panes.Length > 0 && _panes[0].HasSnapshot; } }
+
+        /// <summary>
+        /// Hold the current average spectrum of both panes as a reference, or drop it if
+        /// one is already held. One action rather than two, because the question being
+        /// answered - "is this brighter than that?" - is asked and dismissed with the
+        /// same key.
+        /// </summary>
+        public void ToggleSnapshot()
+        {
+            bool had = HasSnapshot;
+            for (int i = 0; i < _panes.Length; i++)
+            {
+                if (had) _panes[i].ClearSnapshot();
+                else _panes[i].CaptureSnapshot();
+            }
+        }
         public void ResetRange() { _range.Reset(); _features.Reset(); }
 
         /// <summary>
@@ -187,6 +251,8 @@ namespace NostalgiaPlus.Render
 
             bool push = !frozen;
             int div = s.ImmCinematic ? s.ScrollDivider * 4 : s.ScrollDivider;
+            // Kept in step with RowsPerSecond: anything reading time off the image
+            // divides by the same number this pushes by.
             if (div > 1)
             {
                 _scrollTick++;
@@ -209,7 +275,7 @@ namespace NostalgiaPlus.Render
             o.ShowDbScale = s.ShowDbScale; o.LabelFont = labelFont; o.Alpha = alpha;
             o.TopInset = topInset;
 
-            double rowsPerSecond = (double)s.TargetFps / Math.Max(1, s.ScrollDivider);
+            double rowsPerSecond = RowsPerSecond(s);
 
             // dBFS rather than dB: these are magnitudes against full scale, and saying
             // so is the difference between a number you can compare across tracks and
@@ -230,6 +296,7 @@ namespace NostalgiaPlus.Render
                 _panes[i].PeakTrace = s.ColPeakTrace;
                 _panes[i].AverageTrace = s.ColAverageTrace;
                 _panes[i].MinimumTrace = s.ColMinimumTrace;
+                _panes[i].SnapshotTrace = s.ColSnapshot;
                 _panes[i].DrawScaleLane(g, alpha, labelFont, levelUnit, timeUnit,
                                         s.ColPanel, s.ColUnits);
                 _panes[i].DrawSpectrogram(g, _lut, glow);
@@ -670,7 +737,7 @@ namespace NostalgiaPlus.Render
                 text += "   d " + (levels[0] - levels[1]).ToString("+0.0;-0.0; 0.0");
             if (historic)
             {
-                double rowsPerSecond = (double)s.TargetFps / Math.Max(1, s.ScrollDivider);
+                double rowsPerSecond = RowsPerSecond(s);
                 if (rowsPerSecond > 0)
                     text += "   -" + (age / rowsPerSecond).ToString("0.00") + "s";
             }
@@ -752,7 +819,7 @@ namespace NostalgiaPlus.Render
 
                     double semis = 12.0 * Math.Log(freq / ofreq, 2.0);
                     string mtext = semis.ToString("+0.00;-0.00; 0.00") + " st";
-                    double rps = (double)s.TargetFps / Math.Max(1, s.ScrollDivider);
+                    double rps = RowsPerSecond(s);
                     if (rps > 0)
                     {
                         double dt = Math.Abs(hit.AgeAt(mouse.X) - hit.AgeAt(h.Origin.X)) / rps;

@@ -207,6 +207,10 @@ class FsHarness
             Thread.Sleep(2);
         }
 
+        // A held reference curve, so the comparison trace is in the capture. Taken
+        // after the material has run, so it is a curve and not the startup floor.
+        if (Flag("compare")) view.ToggleSnapshot();
+
         // Hover over the left pane so the synced readout is captured.
         SetHover(view, 520, 430, 300, 620);
         view.Invalidate();

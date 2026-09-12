@@ -32,6 +32,8 @@ namespace NostalgiaPlus.Ui
         private Thread _worker;
         private volatile bool _running;
         private volatile bool _frozen;
+        /// <summary>Player position when the image was frozen; -1 when it is live.</summary>
+        private int _frozenAtMs = -1;
         private volatile bool _invalidatePending;
         private volatile bool _paused;
         private bool _ownsCapture = true;
@@ -77,7 +79,9 @@ namespace NostalgiaPlus.Ui
                     IsFullscreen = false,
                     ScrollPixels = _scope.Panes.Length > 0 ? _scope.Panes[0].SpectroRect.Width : 1,
                     IsFrozen = delegate { return _frozen; },
-                    ToggleFreeze = delegate { _frozen = !_frozen; Invalidate(); },
+                    ToggleSnapshot = ToggleSnapshot,
+                    HasSnapshot = delegate { lock (_gate) { return _scope.HasSnapshot; } },
+                    ToggleFreeze = delegate { SetFrozen(!_frozen); },
                     ToggleFullscreen = ToggleFullscreen,
                     SetDockHeight = delegate(int px)
                     {
@@ -355,6 +359,59 @@ namespace NostalgiaPlus.Ui
 
         // ---------------- interaction ----------------
 
+
+        /// <summary>
+        /// Freezing stops the image but not the player, so the position the image's time
+        /// axis is measured back from is stamped here. Without it, double-clicking a
+        /// column on a frozen image seeks to wherever the track has since got to.
+        /// </summary>
+        private void SetFrozen(bool frozen)
+        {
+            if (frozen && !_frozen)
+                _frozenAtMs = Player == null ? -1 : Player.SafePosition();
+            _frozen = frozen;
+            Invalidate();
+        }
+
+        /// <summary>
+        /// Jump to the moment a column was recorded. The image carries far more detail
+        /// than a seek bar does - you can aim at a single hit - so the timeline is worth
+        /// making clickable.
+        /// </summary>
+        private void SeekToImage(Point p)
+        {
+            if (!_settings.SeekOnImageClick || Player == null || Player.Seek == null) return;
+            double back;
+            lock (_gate) { if (!_scope.SecondsAgoAt(p, _settings, out back)) return; }
+
+            int from = (_frozen && _frozenAtMs >= 0) ? _frozenAtMs : Player.SafePosition();
+            int target = from - (int)(back * 1000.0);
+            if (target < 0) target = 0;
+            // Landing on the last instant of a track just starts the next one.
+            int dur = Player.SafeDuration();
+            if (dur > 1000 && target > dur - 1000) target = dur - 1000;
+            try { Player.Seek(target); } catch { }
+        }
+
+        /// <summary>
+        /// Hold the current average spectrum as an amber reference, or drop it. The
+        /// comparison it answers - is this brighter than that - is asked and dismissed
+        /// with the same key, so one action does both.
+        /// </summary>
+        public void ToggleSnapshot()
+        {
+            lock (_gate) { _scope.ToggleSnapshot(); }
+            Invalidate();
+        }
+
+        protected override void OnMouseDoubleClick(MouseEventArgs e)
+        {
+            base.OnMouseDoubleClick(e);
+            if (e.Button != MouseButtons.Left) return;
+            if (_quick.Contains(e.Location)) return;
+            SeekToImage(e.Location);
+        }
+
         protected override void OnMouseDown(MouseEventArgs e)
         {
             base.OnMouseDown(e);
@@ -374,7 +431,7 @@ namespace NostalgiaPlus.Ui
             if (e.Button != MouseButtons.Left) return;
             if (_quick.Click(e.Location)) { _mouseDown = false; Invalidate(); return; }
             _mouseDown = false;
-            if (!_dragged) { _frozen = !_frozen; Invalidate(); }
+            if (!_dragged) SetFrozen(!_frozen);
         }
 
         protected override void OnMouseMove(MouseEventArgs e)
@@ -402,7 +459,8 @@ namespace NostalgiaPlus.Ui
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
-            if (keyData == Keys.Space) { _frozen = !_frozen; Invalidate(); return true; }
+            if (keyData == Keys.Space) { SetFrozen(!_frozen); return true; }
+            if (keyData == Keys.A) { ToggleSnapshot(); return true; }
             if (keyData == Keys.F11) { ToggleFullscreen(); return true; }
             if (keyData == Keys.F1) { ShowHelp(); return true; }
             return base.ProcessCmdKey(ref msg, keyData);

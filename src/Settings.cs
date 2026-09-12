@@ -30,7 +30,8 @@ namespace NostalgiaPlus
     public enum ThemeSlot
     {
         Background, Panel, GridMajor, GridMinor, AxisText, Units,
-        Curve, PeakTrace, AverageTrace, MinimumTrace, Hover, Waveform
+        Curve, PeakTrace, AverageTrace, MinimumTrace, Hover, Waveform,
+        Snapshot
     }
 
     /// <summary>Which end of the panes the reserved scale strip sits at.</summary>
@@ -111,6 +112,11 @@ namespace NostalgiaPlus
         public bool ShowHoverPin = true;
         /// <summary>Ghost lines at integer multiples of the hovered frequency.</summary>
         public bool ShowHarmonics = false;
+        /// <summary>
+        /// Double-click a spectrogram column to jump the player to the moment that
+        /// produced it. The image is a timeline with far more detail than a seek bar.
+        /// </summary>
+        public bool SeekOnImageClick = true;
         /// <summary>Master switch for all fullscreen on-screen display.</summary>
         public bool FsShowOsd = true;
 
@@ -154,6 +160,12 @@ namespace NostalgiaPlus
         public bool DeckShowLufsS = true;
         public bool DeckShowTruePeak = true;
         public bool DeckShowCrest = true;
+        public bool DeckShowLufsI = true;
+        public bool DeckShowLra = true;
+        public bool DeckShowOvers = true;
+        public bool DeckShowBpm = true;
+        /// <summary>Spectral centre of gravity in hertz - where the sound is sitting.</summary>
+        public bool DeckShowBrightness = true;
         /// <summary>Split the quick bar around the centre gutter so the axis runs unbroken.</summary>
         public bool QuickBarSplit = true;
         public int BarSize = 6;
@@ -206,6 +218,7 @@ namespace NostalgiaPlus
         public Color ColMinimumTrace = Color.Empty;
         public Color ColHover = Color.Empty;
         public Color ColWaveform = Color.Empty;
+        public Color ColSnapshot = Color.Empty;
 
         /// <summary>The slot's colour, or <paramref name="fallback"/> when it is unset.</summary>
         public static Color Pick(Color slot, Color fallback)
@@ -239,7 +252,11 @@ namespace NostalgiaPlus
                 case ThemeSlot.AverageTrace: return ColAverageTrace;
                 case ThemeSlot.MinimumTrace: return ColMinimumTrace;
                 case ThemeSlot.Hover: return ColHover;
-                default: return ColWaveform;
+                case ThemeSlot.Waveform: return ColWaveform;
+                case ThemeSlot.Snapshot: return ColSnapshot;
+                // Named rather than defaulted: a slot added to the enum and forgotten
+                // here used to come back as the waveform's colour instead of unset.
+                default: return Color.Empty;
             }
         }
 
@@ -258,7 +275,8 @@ namespace NostalgiaPlus
                 case ThemeSlot.AverageTrace: ColAverageTrace = c; break;
                 case ThemeSlot.MinimumTrace: ColMinimumTrace = c; break;
                 case ThemeSlot.Hover: ColHover = c; break;
-                default: ColWaveform = c; break;
+                case ThemeSlot.Waveform: ColWaveform = c; break;
+                case ThemeSlot.Snapshot: ColSnapshot = c; break;
             }
         }
 
@@ -670,6 +688,7 @@ namespace NostalgiaPlus
                 s.SyncHover = ParseBool(map, "SyncHover", s.SyncHover);
                 s.ShowHoverPin = ParseBool(map, "ShowHoverPin", s.ShowHoverPin);
                 s.ShowHarmonics = ParseBool(map, "ShowHarmonics", s.ShowHarmonics);
+                s.SeekOnImageClick = ParseBool(map, "SeekOnImageClick", s.SeekOnImageClick);
                 s.FsShowOsd = ParseBool(map, "FsShowOsd", s.FsShowOsd);
                 s.BarSize = (int)ParseDouble(map, "BarSize", s.BarSize);
                 s.LedSegment = (int)ParseDouble(map, "LedSegment", s.LedSegment);
@@ -695,6 +714,11 @@ namespace NostalgiaPlus
                 s.DeckShowLufsS = ParseBool(map, "DeckShowLufsS", s.DeckShowLufsS);
                 s.DeckShowTruePeak = ParseBool(map, "DeckShowTruePeak", s.DeckShowTruePeak);
                 s.DeckShowCrest = ParseBool(map, "DeckShowCrest", s.DeckShowCrest);
+                s.DeckShowLufsI = ParseBool(map, "DeckShowLufsI", s.DeckShowLufsI);
+                s.DeckShowLra = ParseBool(map, "DeckShowLra", s.DeckShowLra);
+                s.DeckShowOvers = ParseBool(map, "DeckShowOvers", s.DeckShowOvers);
+                s.DeckShowBpm = ParseBool(map, "DeckShowBpm", s.DeckShowBpm);
+                s.DeckShowBrightness = ParseBool(map, "DeckShowBrightness", s.DeckShowBrightness);
                 s.QuickBarSplit = ParseBool(map, "QuickBarSplit", s.QuickBarSplit);
                 s.FsShowWaveform = ParseBool(map, "FsShowWaveform", s.FsShowWaveform);
                 s.FsImmersive = ParseBool(map, "FsImmersive", s.FsImmersive);
@@ -771,6 +795,7 @@ namespace NostalgiaPlus
                 sb.AppendLine("SyncHover=" + SyncHover);
                 sb.AppendLine("ShowHoverPin=" + ShowHoverPin);
                 sb.AppendLine("ShowHarmonics=" + ShowHarmonics);
+                sb.AppendLine("SeekOnImageClick=" + SeekOnImageClick);
                 sb.AppendLine("FsShowOsd=" + FsShowOsd);
                 sb.AppendLine("BarSize=" + BarSize);
                 sb.AppendLine("LedSegment=" + LedSegment);
@@ -793,6 +818,11 @@ namespace NostalgiaPlus
                 sb.AppendLine("DeckShowLufsS=" + DeckShowLufsS);
                 sb.AppendLine("DeckShowTruePeak=" + DeckShowTruePeak);
                 sb.AppendLine("DeckShowCrest=" + DeckShowCrest);
+                sb.AppendLine("DeckShowLufsI=" + DeckShowLufsI);
+                sb.AppendLine("DeckShowLra=" + DeckShowLra);
+                sb.AppendLine("DeckShowOvers=" + DeckShowOvers);
+                sb.AppendLine("DeckShowBpm=" + DeckShowBpm);
+                sb.AppendLine("DeckShowBrightness=" + DeckShowBrightness);
                 sb.AppendLine("QuickBarSplit=" + QuickBarSplit);
                 sb.AppendLine("FsShowWaveform=" + FsShowWaveform);
                 sb.AppendLine("FsImmersive=" + FsImmersive);

@@ -62,6 +62,14 @@ namespace NostalgiaPlus.Render
         // from it - without this, hovering over a column from ten seconds ago reads
         // today's spectrum.
         private float[] _hist = new float[0];
+
+        /// <summary>
+        /// A frozen copy of the average spectrum, drawn over the live one until it is
+        /// dropped. The average and not the instantaneous curve: comparing two pieces of
+        /// music means comparing their tonal balance, and the live curve is a different
+        /// shape every frame.
+        /// </summary>
+        private double[] _snapshot;
         private int _histHead, _histCols, _histBins;
 
         // Per-element overrides. Empty means the drawing code keeps its own colour,
@@ -75,6 +83,7 @@ namespace NostalgiaPlus.Render
         public Color PeakTrace = Color.Empty;
         public Color AverageTrace = Color.Empty;
         public Color MinimumTrace = Color.Empty;
+        public Color SnapshotTrace = Color.Empty;
 
         public Rectangle Bounds { get; private set; }
         public Rectangle CurveRect { get; private set; }
@@ -93,6 +102,8 @@ namespace NostalgiaPlus.Render
 
         public double[] Raw { get { return _raw; } }
         public double[] Display { get { return _display; } }
+        /// <summary>True while a reference curve is being held over this pane.</summary>
+        public bool HasSnapshot { get { return _snapshot != null; } }
         public ExtremumTracker Extremes { get { return _ext; } }
 
         public void Layout(Rectangle bounds, int curveWidth, bool curveOnLeft, int[] lut)
@@ -214,6 +225,15 @@ namespace NostalgiaPlus.Render
             }
             _ext.Update(_shaped, n, dt);
         }
+
+        /// <summary>Holds the current average spectrum as a reference curve.</summary>
+        public void CaptureSnapshot()
+        {
+            double[] src = _ext.Average;
+            _snapshot = (src == null || src.Length == 0) ? null : (double[])src.Clone();
+        }
+
+        public void ClearSnapshot() { _snapshot = null; }
 
         /// <summary>Appends one time slice to the spectrogram.</summary>
         public void PushColumn(double floorDb, double ceilDb, int[] lut)
@@ -376,6 +396,16 @@ namespace NostalgiaPlus.Render
                                          Settings.PickKeepAlpha(AverageTrace, Color.FromArgb(170, 130, 200, 255)));
                 if (o.ShowMin) DrawTrace(g, _ext.Min, baseX, dir, amp, floorDb, span,
                                          Settings.PickKeepAlpha(MinimumTrace, Color.FromArgb(140, 120, 120, 140)));
+            }
+
+            // A resize invalidates it: the bins it was taken over no longer line up with
+            // the rows it would be drawn against.
+            if (_snapshot != null && _snapshot.Length != _display.Length) _snapshot = null;
+            if (_snapshot != null)
+            {
+                g.SmoothingMode = SmoothingMode.None;
+                DrawTrace(g, _snapshot, baseX, dir, amp, floorDb, span,
+                          Settings.PickKeepAlpha(SnapshotTrace, Color.FromArgb(215, 255, 205, 90)));
             }
 
             g.SmoothingMode = old;
